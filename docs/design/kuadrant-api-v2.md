@@ -69,11 +69,15 @@ for the API spec.
 Each *API Product* can hold multiple OAS docs references. The *API Product* `spec` field includes references
 in the form of URLs and config map references. The actual content may be included in the `status` field.
 
-Kuadrant will extend the OAS with custom extensions `x-kuadrant-*`, initially for rate limit purposes.
-In the future, OAS extensions could be leveraged for other API management features, for instance usage plans.
-More about the kuadrant custom extensions in the spec reference section.
+Kuadrant will extend the OAS doc leveraging
+[OAS custom extensions](https://github.com/OAI/OpenAPI-Specification/blob/main/versions/3.0.2.md#specificationExtensions)
+`x-kuadrant-*`, initially for rate limit purposes. In the future, OAS extensions could be leveraged
+for other API management features, for instance usage plans. More about the kuadrant custom
+extensions in the spec reference section.
 
 In case of lacking one OpenAPI doc, kuadrant will provide tooling for easy generation of OpenAPI docs.
+
+Any kuadrant configuration at API path or operation level will be defined as OpenAPI kuadrant extension.
 
 **Backends - Upstreams**
 
@@ -87,28 +91,33 @@ These annotations and labels aim to make the `spec` of the *API Product* resourc
 
 **AuthConfig Templates**
 
-The configuration of API protection via authentication requires *three* steps. Only the first
+The configuration of the API authentication requires *three* steps. Only the first
 two steps involve kuadrant, but all three of them are required to have the system working.
 For completeness, all of them are listed here.
 
 1. Operation based authentication config
 
 The customer needs to specify which API operation (method + path) requires authentication and
-which type of authentication (API key, oauth2, oidc, http basic, etc). OpenAPI spec fully covers this use case
-and kuadrant can read this configuration from OAS doc. For any authN type not covered by OAS 3.X,
-kuadrant could provide extensions for added authentication types.
+which type of authentication (API key, oauth2, oidc, http basic, etc). OpenAPI spec fully covers
+this use case and kuadrant can read this configuration from OAS doc. For any authN type not covered
+by OAS 3.X, kuadrant could provide extensions for added authentication types. OpenAPI 3.x does
+not support authentication requirements at path level, only global or operation level.
 
 1. Configuration for each type of authentication
 
 The customer needs to specify the authentication provider configuration. Kuadrant provides Authorino
-`AuthConfig` custom resource to specify authentication provider configuration. The *API Product* 
-resource will include a template object in the `.spec` to specify `AuthConfig` objects. 
+`AuthConfig` custom resource to specify authentication provider configuration. The *API Product*
+resource will include a template object in the `.spec` to specify `AuthConfig` objects.
 
 The *API Product* resource allows to define multiple AuthConfig templates.
 
-To illustrate this with examples, the API Key auth type would require `AuthConfig` template with 
-`spec.identity[].apiKey` object. The OIDC auth type would require `AuthConfig` template with 
+To illustrate this with examples, the API Key auth type would require `AuthConfig` template with
+`spec.identity[].apiKey` object. The OIDC auth type would require `AuthConfig` template with
 `spec.identity[].oidc` object.
+
+Kuadrant can add some validations to prevent inconcistencies. For instance, if the OAS doc specifies
+that API key is being required for some API operations, then kuadrant can make sure that the
+`AuthConfig` template includes `apiKey` identity type.
 
 Actually, Authorino's `AuthConfig` covers far more than authentication. The customer can do more
 than just authentication, the customer can apply authorization policies as well.
@@ -116,14 +125,43 @@ than just authentication, the customer can apply authorization policies as well.
 1. Authentication data provisioning
 
 The customer needs to provision some authentication data. For the API key use case, the customer
-needs to generate secrets with the actual tokens. For the OIDC use case, the customer needs to 
+needs to generate secrets with the actual tokens. For the OIDC use case, the customer needs to
 provision OAUTH2 clients and users in the Authentication provider.
-
 
 **RateLimit Template**
 
+The configuration of the API rate limit requires *two* steps.
+
+1. Path/Operation based rate limit config
+
+The customer needs to define which API paths/operations require rate limit enforcing.
+Furthermore, the customer needs to define what type of rate limit needs to be enforced at
+path/operation level. Global rate limit is a particular case where all API operations require
+enforcing rate limit of a particular rate limit type.
+
+At each API path/operation level, the customer may define
+[envoy rate limit actions](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/route/v3/route_components.proto#envoy-v3-api-msg-config-route-v3-ratelimit)
+which populates a vector of descriptor entries sent to the rate limit service (Limitador in kuadrant).
+
+The rate limit actions will be defined as OpenAPI 3.X kuadrant extensions at global, path or
+operation level.
+
+1. Rate limit configuration
+
+The customer needs to specify the rate limit service provider configuration. Kuadrant provides
+Limitador's `RateLimit` custom resource to specify rate limit configuration. The *API Product*
+resource will include a template object in the `.spec` to specify `RateLimit` objects.
+
+The *API Product* resource allows to define multiple `RateLimit` templates.
 
 ### API Product Reference
+
+| Field | Type | Description | Required |
+| --- | --- | --- | --- |
+| domains | `string[]` | The destination authority to which traffic is being sent | yes |
+
+**Example**
+
 
 
 
