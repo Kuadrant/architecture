@@ -77,16 +77,21 @@ A kuadrant instance includes:
 * One Authorino deployment instance
 * A list of dedicated gateways. Those gateways cannot be shared between multiple kuadrant instances.
 
-![](https://i.imgur.com/QdeCYs6.png)
+A diagram to ilustrate some concepts:
+
+![](https://i.imgur.com/y7gQfRa.png)
 
 Highlights:
 * The Kuadrant instance is not enclosed by k8s namespaces.
 * One gateway can belong to (be managed by) one and only one kuadrant instance.
 * One kuadrant instance does not own rate limit policies or auth policies.
-* The traffic routed by HTTPRoute 1 through the gateway A and gateway B will be protected by RLP 1 and KAP 1, using Limitador and Authorino instances located at the namespace K1.
-* The traffic routed by HTTPRoute 2 through the gateway B will be protected by RLP 2 and KAP 2, using Limitador and Authorino instances located at the namespace K1
-* The traffic routed by HTTPRoute 2 through the gateway C will be protected by RLP 2 and KAP 2, using Limitador and Authorino instances located at the namespace K2
+* Each kuadrant instance owns one instance (possibly multiple replicas, though) of Limitador and one instance of Authorino. Those instances are shared among all gateways managed by the kuadrant instance.
+* The traffic routed by HTTPRoute 1 through the gateway A will be protected by RLP 1 and KAP 1, using Limitador and Authorino instances located at the namespace K1.
+* The traffic routed by HTTPRoute 2 through the gateway B will be protected by RLP 2 and KAP 2, using Limitador and Authorino instances located at the namespace K1.
+* The traffic routed by HTTPRoute 2 through the gateway C will be protected by RLP 2 and KAP 2, using Limitador and Authorino instances located at the namespace K2.
 * The HTTPRoute 2 example shows that when the traffic for the same service is routed through multiple gateways, at least for rate limiting, Kuadrant cannot keep consistent counters. The user would expect X rps and actually it would be X rps per gateway.
+* The traffic matching HTTPRoute 3 will be protected by RLP 3 and KAP 3. These policies are both gateway targeting policies. Gateway targeted policies will be applied only to traffic matching at least one HTTPRoute.
+* The traffic hitting the Gateway E3 will __not__ be protected by any policies even though RLP 4 and KAP 4 target the Gateway E. Gateway targeted policies will be applied only to traffic matching at least one HTTPRoute. Since no HTTPRoute is targeting Gateway E, policies have no effect.
 
 ### The Kuadrant CRD
 
@@ -100,7 +105,9 @@ metadata:
 spec: {}
 ```
 
-According to the definition above of a kuadrant instance, a Kuadrant instance, the proposed new Kuadrant CRD would add a label __selector__ to specify which gateways that instance would manage. Additionally, for dev testing purposes, the Kuadrant CRD would have image fields for the kuadrant controller, Limitador and Authorino. A Kuadrant CR example
+According to the definition above of the kuadrant instance,
+the proposed new Kuadrant CRD would add a label __selector__ to specify which gateways that instance would manage.
+Additionally, for dev testing purposes, the Kuadrant CRD would have image URL fields for the kuadrant controller, Limitador and Authorino components. A Kuadrant CR example:
 
 ```yaml
 apiVersion: kuadrant.io/v1beta1
