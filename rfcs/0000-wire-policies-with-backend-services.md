@@ -137,6 +137,13 @@ Note that while precedent set by other projects is some motivation, it does not 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
+- `Deploy the RateLimitPolicy controller passing as env var the address of the limitador instance in the K namespace.`
+  * "This is meant for the WASM plugin and the istio `envoy_filter` I reckon, no?"
+- `Deploy the AuthPolicy controller`
+  * "Same for this one ^^"
+- `The traffic routed by HTTPRoute 2 through the gateway B will be protected by RLP 2 and KAP 2, using Limitador and Authorino instances located at the namespace K1`
+  * "It's a bit tricky to think of a use case of an underlying service, rate limited by 2 instances of limitador (not sure if applies to authorino too) when it comes to the same HTTPRoute with 2 parentRefs of GW managed by different Kuadrant instances"
+
 - What parts of the design do you expect to resolve through the RFC process before this gets merged?
 - What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
 - What related issues do you consider out of scope for this RFC that could be addressed in the future independently of the solution that comes out of this RFC?
