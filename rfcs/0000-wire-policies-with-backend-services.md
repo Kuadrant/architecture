@@ -18,30 +18,30 @@ Kuadrant suffered an unwanted side effect: Kuadrant's policies only worked when 
 This issue comes from the fact that the policy controllers are no longer deployed as components of a particular Kuadrant instance.
 Instead, the policy controllers live at the Kuadrant's operator pod and they are up&running even if there is no Kuadrant instance running in the cluster.
 The very source issue of this "side effect" is the design about how backend services were wired with the Ratelimit/Auth policies.
-The design allowed one kuadrant instance to be installed in any namespace, however, the design only allowed one kuadrant instance to be running in the cluster. 
+The design allowed one kuadrant instance to be installed in any namespace, however, the design only allowed one kuadrant instance to be running in the cluster.
 
 ### How it worked before the merge #48
 When an instance of Kuadrant, represented by a Kuadrant custom Resource (RC), was created, the following workflow was run by the Kuadrant operator:
-* Read the Kuadrant custom resource, paying attention to the namespace. Let's call `K` the namespace where the Kuadrant CR is created. 
+* Read the Kuadrant custom resource, paying attention to the namespace. Let's call `K` the namespace where the Kuadrant CR is created.
 * Deploy one Limitador instance in the `K` namespace
 * Deploy one Authorino instance in the `K` namespace
 * Register Authorino instance living in `K` in the Istio system as an external authorization service.
-* Deploy the RateLimitPolicy controller passing as env var the address of the limitador instance in the `K` namespace. 
+* Deploy the RateLimitPolicy controller passing as env var the address of the limitador instance in the `K` namespace.
 * Deploy the AuthPolicy controller
 
-When the user created a rate limit policy, the controller already knew about the Limitador's location (name and namespace) to configure it accordingly with the spec of the policy. 
+When the user created a rate limit policy, the controller already knew about the Limitador's location (name and namespace) to configure it accordingly with the spec of the policy.
 
 Authorino is a k8s controller and the Kuadrant's operator deploys it in cluster-wide mode
 without any [sharding](https://github.com/Kuadrant/authorino/blob/main/docs/architecture.md#sharding) defined.
-When the user created an auth policy, the controller does not need to know where authorino lives because a) it assumes that there is only one Authorino instance (which might be wrong as well) and b) the controller assumes that Authorino is watching the entire cluster without filtering. 
+When the user created an auth policy, the controller does not need to know where authorino lives because a) it assumes that there is only one Authorino instance (which might be wrong as well) and b) the controller assumes that Authorino is watching the entire cluster without filtering.
 Thus, the controller manages an AuthConfig object in the hard-coded `kuadrant-system` namespace (which btw it is also wrong).
 
 ### How it works after the merge #48
 When the policy controllers were moved to the operator's pod, one of the design's requirements was unmet: the controllers know at deploy time Limitador's location. Thus, causing the issue.
-The design assumed one policy controller instance per limitador instance. The policy controller got limitador's location at boot time via an environment variable. 
-After the policies merge into the operator's pod, the policies controllers will be a singleton instance (one pod, one container) at the cluster level. 
+The design assumed one policy controller instance per limitador instance. The policy controller got limitador's location at boot time via an environment variable.
+After the policies merge into the operator's pod, the policies controllers will be a singleton instance (one pod, one container) at the cluster level.
 Regardless of the kuadrant's support for multiple or single limitador/authorino instances, the policies controllers will be running in a single pod in the entire cluster.
-Even if kuadrant only supports a single limitador/authorino instance, 
+Even if kuadrant only supports a single limitador/authorino instance,
 the policies controllers still need to know the location of the limitador/authorino instances.
 
 Therefore, a new design is needed that wires the user created policies with an existing limitador/authorino instance. Even though, currently, this wiring up works for the AuthPolicy, it is done under the assumption of a single Authorino watching all the cluster for the AuthConfig objects, which is a sub-optimal design.
@@ -75,26 +75,49 @@ A kuadrant instance includes:
 
 * One Limitador deployment instance
 * One Authorino deployment instance
-* A list of dedicated gateways. Those gateways cannot be shared between multiple kuadrant instances. 
+* A list of dedicated gateways. Those gateways cannot be shared between multiple kuadrant instances.
 
 ![](https://i.imgur.com/QdeCYs6.png)
 
 Highlights:
-* The Kuadrant instance is not enclosed by k8s namespaces. 
+* The Kuadrant instance is not enclosed by k8s namespaces.
 * One gateway can belong to (be managed by) one and only one kuadrant instance.
 * One kuadrant instance does not own rate limit policies or auth policies.
-* The traffic routed by HTTPRoute 1 through the gateway A and gateway B will be protected by RLP 1 and KAP 1, using Limitador and Authorino instances located at the namespace K1. 
+* The traffic routed by HTTPRoute 1 through the gateway A and gateway B will be protected by RLP 1 and KAP 1, using Limitador and Authorino instances located at the namespace K1.
 * The traffic routed by HTTPRoute 2 through the gateway B will be protected by RLP 2 and KAP 2, using Limitador and Authorino instances located at the namespace K1
 * The traffic routed by HTTPRoute 2 through the gateway C will be protected by RLP 2 and KAP 2, using Limitador and Authorino instances located at the namespace K2
-* The traffic 
+* The HTTPRoute 2 example shows that when the traffic for the same service is routed through multiple gateways, at least for rate limiting, Kuadrant cannot keep consistent counters. The user would expect X rps and actually it would be X rps per gateway.
 
-Explain the proposal as if it was implemented and you were teaching it to Kuadrant user. That generally means:
+### The Kuadrant CRD
 
-- Introducing new named concepts.
-- Explaining the feature largely in terms of examples.
-- Explaining how a user should *think* about the feature, and how it would impact the way they already use Kuadrant. It should explain the impact as concretely as possible.
-- If applicable, provide sample error messages, deprecation warnings, or migration guidance.
-- If applicable, describe the differences between teaching this to existing and new Kuadrant users.
+Currently, the Kuadrant CRD has an empty spec.
+
+```yaml
+apiVersion: kuadrant.io/v1beta1
+kind: Kuadrant
+metadata:
+  name: kuadrant-sample
+spec: {}
+```
+
+According to the definition above of a kuadrant instance, a Kuadrant instance, the proposed new Kuadrant CRD would add a label __selector__ to specify which gateways that instance would manage. Additionally, for dev testing purposes, the Kuadrant CRD would have image fields for the kuadrant controller, Limitador and Authorino. A Kuadrant CR example
+
+```yaml
+apiVersion: kuadrant.io/v1beta1
+kind: Kuadrant
+metadata:
+  name: kuadrant-sample
+spec:
+  controlPlane:
+    image: quay.io/kuadrant/kuadrant-operator:mytag
+  limitador:
+    image: quay.io/kuadrant/limitador:mytag
+  authorino:
+    image: quay.io/kuadrant/authorino:mytag
+  gatewaysSelector:
+    matchLabels:
+      app: kuadrant
+```
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
