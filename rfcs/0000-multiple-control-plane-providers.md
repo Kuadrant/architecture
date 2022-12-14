@@ -169,6 +169,8 @@ Reconciliation becomes complex with multiple control plane providers per Kuadran
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
+**Alternative A.** Single gateway provider per Kuadrant instance.
+
 A less costly approach could consist upon allowing a Kuadrant instance to explicitly point to one and only one gateway provider. Multiple could still be present in the cluster, however, for each Kuadrant instance, configuration would be injected into only one of the available providers. To have Kuadrant injecting configuration in more than one control plane, multiple Kuadrant instances would have to be deployed.
 
 This alternative would simplify reconciliation and the API. The latter could look like the following, based on a example with 2 providers and 2 Kuadrant instances:
@@ -205,6 +207,28 @@ Perhaps the described issue is a minor issue or even no issue at all, given the 
 
 If, on the other hand, the premise above is found to be false, then either multiple gateways providers per instance of Kuadrant has to be supported or the definition of "Kuadrant instance" needs to be revised.
 
+<br/>
+
+**Alternative B.** Implicit reference to the gateway provider.
+
+With the proposal coming with [RFC Wiring policies with Kuadrant services](https://github.com/Kuadrant/architecture/pull/5), an alternative way to also link the Kuadrant instances and the corresponding control plane/gateway providers into which the Operator needs to inject configuration could be by following the references between either:
+1. the Kuadrant policies (`RateLimitPolicy` and `AuthPolicy`) and their targeted network resources, that ultimately link all the way with gateways and the gateway providers; or
+2. (more directly) the `Kuadrant` custom resources and their corresponding gateway objects, linked via labels and label selectors (see [architecture#5:124-126](https://github.com/Kuadrant/architecture/blob/9545f760b66ff9aaddeeaab126d5276a086e228c/rfcs/0000-wire-policies-with-backend-services.md?plain=1#L124-L126)).
+
+While option 1 above implies a lazy configuration of the functional components into the gateway providers, option 2 perhaps could be implemented in a rather proactive fashion, such as the one proposed in this RFC.
+
+By linking the `Kuadrant` CR directly to the gateways to be configured, maybe the Operator could infer the provider kinds and provider control plane configuration objects behind those gateways and thus proceed with the injection of the functional components at this level. However, this would be an approach yet to be proven. Without guarantees that the [`GatewayClass`](https://gateway-api.sigs.k8s.io/api-types/gatewayclass/) objects referenced by the [`Gateway`](https://gateway-api.sigs.k8s.io/api-types/gateway/) instances point unequivocally to the gateway provider kind and configuration object in a way that the Operator knows how to inject the configuration assertively, this may or may not be a feasible option after all.
+
+As an example of the problem of detecting the exact kind of gateway provider and implementing the configuration accordingly, without it being based again on convention or heuristic, consider the lack of distiction between Istio and OpenShift Service Mesh (OSSM) regarding the structure of their defined `GatewayClass` objects. In fact, such distinction perceived at the level of a `Gateway` object may even go against the purpose of abstraction embodied in the definition of the `GatewayClass` kind, as stated in Gateway API's [specification](https://gateway-api.sigs.k8s.io/api-types/gatewayclass/#gatewayclass):
+
+> We expect that one or more `GatewayClasses` will be created by the infrastructure provider for the user. It allows decoupling of which mechanism (e.g. controller) implements the `Gateways` from the user. For instance, an infrastructure provider may create two `GatewayClasses` named `internet` and `private` to reflect `Gateways` that define Internet-facing vs private, internal applications.
+>
+> [...]
+>
+> The user of the classes will not need to know how `internet` and `private` are implemented.
+
+Differences between `GatewayClasses` provided by different implementations such as the [GatewayClass parameters](https://gateway-api.sigs.k8s.io/api-types/gatewayclass/#gatewayclass-parameters) and [GatewayClass controller selection](https://gateway-api.sigs.k8s.io/api-types/gatewayclass/#gatewayclass-controller-selection) are, according to the spec, only "encouraged" or "RECOMMENDED".
+
 # Prior art
 [prior-art]: #prior-art
 
@@ -220,6 +244,7 @@ N/A.
 5. What other gateway providers could we aim to support in the future? _Possible answers:_ [Envoy Gateway](https://gateway.envoyproxy.io/v0.2.0/), [Contour](https://projectcontour.io), other API gateways not based on Envoy, ...
 6. Is "gateway provider" an adequate term? What about supporting injecting Kuadrant into sidecar proxies in the future?
 7. Should the reconciliation of a `Kuadrant` CR be considered successful only if all gateway providers indicated in the spec were successfuly configured for that instance of Kuadrant? What shall the Operator do in case some of the gateway providers to fail to be configured while others succeed? Shall the Operator roll back the successful configurations in case of partial failure? Should the Operator reflect the state of the reconciliation of each gateway provider listed in the spec in the status subresource of the `Kuadrant` CR? (See [Troubleshooting](#troubleshooting) for possible reasons for the reconciliation to fail.)
+8. Is there any overlap or (more importantly) any conflict between the proposal stated in this RFC and the one presented in [RFC Wiring policies with Kuadrant services](https://github.com/Kuadrant/architecture/pull/5)? Could the gateway selectors proposed in the latter serve as a substitute to a more explicit linking between Kuadrant instances and targeted gateway providers to configure for the Kuadrant functional components (Authorino and Limitador)?
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
