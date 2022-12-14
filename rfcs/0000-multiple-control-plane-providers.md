@@ -62,6 +62,17 @@ The following kinds of resources are initially supported:
 - `IstioOperator` (`install.istio.io/v1alpha1`)
 - `ServiceMeshControlPlane` (`maistra.io/v2`)
 
+**Troubleshooting**
+
+[troubleshooting]: #troubleshooting
+
+The result of configuring the Kuadrant instance in each of the targeted gateway providers by the Operator will be reflected in the status of the `Kuadrant` custom resource.
+
+Examples of failures that can happen during the reconciliation of the gateway providers stated in a `Kuadrant` custom resource:
+- The gateway provider reference is broken – the object cannot be found
+- The gateway provider kind is not supported by Kuadrant
+- The gateway provider is already taken by another instance of Kuadrant running in the same cluster
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
@@ -208,6 +219,7 @@ N/A.
 4. What gateway providers should we initially support? _A:_ Istio and OpenShift Service Mesh (OSSM).
 5. What other gateway providers could we aim to support in the future? _Possible answers:_ [Envoy Gateway](https://gateway.envoyproxy.io/v0.2.0/), [Contour](https://projectcontour.io), other API gateways not based on Envoy, ...
 6. Is "gateway provider" an adequate term? What about supporting injecting Kuadrant into sidecar proxies in the future?
+7. Should the reconciliation of a `Kuadrant` CR be considered successful only if all gateway providers indicated in the spec were successfuly configured for that instance of Kuadrant? What shall the Operator do in case some of the gateway providers to fail to be configured while others succeed? Shall the Operator roll back the successful configurations in case of partial failure? Should the Operator reflect the state of the reconciliation of each gateway provider listed in the spec in the status subresource of the `Kuadrant` CR? (See [Troubleshooting](#troubleshooting) for possible reasons for the reconciliation to fail.)
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
