@@ -237,14 +237,22 @@ N/A.
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-1. Is having multiple service mesh control planes (i.e. multiple gateway providers) within the same cluster a real use case or rather just a technical possibility that we choose not to support?
-2. Does a Kuadrant instance need to be able to target more than one control plane/gateway provider? (See [Rationale and alternatives](#rationale-and-alternative).)
-3. Should targeting a control plane/gateway provider be required to be explicit (e.g. in a `Kuadrant` CR) or it can based on convention/heuristic (e.g. default to Istio)? _Note:_ I am personally inclined to it needs to be explicit, hence the proposal in this RFC.
-4. What gateway providers should we initially support? _A:_ Istio and OpenShift Service Mesh (OSSM).
-5. What other gateway providers could we aim to support in the future? _Possible answers:_ [Envoy Gateway](https://gateway.envoyproxy.io/v0.2.0/), [Contour](https://projectcontour.io), other API gateways not based on Envoy, ...
-6. Is "gateway provider" an adequate term? What about supporting injecting Kuadrant into sidecar proxies in the future?
-7. Should the reconciliation of a `Kuadrant` CR be considered successful only if all gateway providers indicated in the spec were successfuly configured for that instance of Kuadrant? What shall the Operator do in case some of the gateway providers to fail to be configured while others succeed? Shall the Operator roll back the successful configurations in case of partial failure? Should the Operator reflect the state of the reconciliation of each gateway provider listed in the spec in the status subresource of the `Kuadrant` CR? (See [Troubleshooting](#troubleshooting) for possible reasons for the reconciliation to fail.)
-8. Is there any overlap or (more importantly) any conflict between the proposal stated in this RFC and the one presented in [RFC Wiring policies with Kuadrant services](https://github.com/Kuadrant/architecture/pull/5)? Could the gateway selectors proposed in the latter serve as a substitute to a more explicit linking between Kuadrant instances and targeted gateway providers to configure for the Kuadrant functional components (Authorino and Limitador)?
+1. Is having multiple service mesh control planes (i.e. multiple gateway providers) within the same cluster a real use case or rather just a technical possibility that we choose not to support?<br/>
+  **_A:_**<br/><br/>
+2. Does a Kuadrant instance need to be able to target more than one control plane/gateway provider? (See [Rationale and alternatives](#rationale-and-alternative).)<br/>
+  **_A:_**<br/><br/>
+3. Should targeting a control plane/gateway provider be required to be explicit (e.g. in a `Kuadrant` CR) or it can based on convention/heuristic (e.g. default to Istio)? _Note:_ I am personally inclined to it needs to be explicit, hence the proposal in this RFC.<br/>
+  **_A:_**<br/><br/>
+4. What gateway providers should we initially support?<br/>
+  **_A:_** Istio and OpenShift Service Mesh (OSSM).<br/><br/>
+5. What other gateway providers could we aim to support in the future? _Possible answers:_ [Envoy Gateway](https://gateway.envoyproxy.io/v0.2.0/), [Contour](https://projectcontour.io), other API gateways not based on Envoy, ...<br/>
+  **_A:_** Only gateways and perhaps sidecar proxies based on Envoy for quite some time, likely.<br/><br/>
+6. Is "gateway provider" an adequate term? What about supporting injecting Kuadrant into sidecar proxies in the future?<br/>
+  **_A:_** We'll stay with "gateway providers" for now. This can be changed in the future. Sidecars may become a thing one day; this should be either transparent to the scope of this RFC or changeable in the future as part of releasing a new API.<br/><br/>
+7. Should the reconciliation of a `Kuadrant` CR be considered successful only if all gateway providers indicated in the spec were successfuly configured for that instance of Kuadrant? What shall the Operator do in case some of the gateway providers to fail to be configured while others succeed? Shall the Operator roll back the successful configurations in case of partial failure? Should the Operator reflect the state of the reconciliation of each gateway provider listed in the spec in the status subresource of the `Kuadrant` CR? (See [Troubleshooting](#troubleshooting) for possible reasons for the reconciliation to fail.)<br/>
+  **_A:_**<br/><br/>
+8.  Is there any overlap or (more importantly) any conflict between the proposal stated in this RFC and the one presented in [RFC Wiring policies with Kuadrant services](https://github.com/Kuadrant/architecture/pull/5)? Could the gateway selectors proposed in the latter serve as a substitute to a more explicit linking between Kuadrant instances and targeted gateway providers to configure for the Kuadrant functional components (Authorino and Limitador)?<br/>
+  **_A:_**
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
