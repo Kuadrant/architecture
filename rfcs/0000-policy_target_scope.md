@@ -1,6 +1,6 @@
-# RFC A single Policy scoped to the whole targeted HTTPRoute
+# RFC A single Policy scoped to HTTPRoutes and HTTPRouteRule
 
-- Feature Name: Policy scoped to the whole targeted Route
+- Feature Name: Policy targeting HTTPRoute and HTTPRouteRules
 - Start Date: 2022-11-09
 - RFC PR: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/pull/0000)
 - Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
