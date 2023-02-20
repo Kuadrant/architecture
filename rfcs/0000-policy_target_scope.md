@@ -221,6 +221,11 @@ Hereby limiting the amount of hits to our `/login` on port `8081` to a 50 reques
 apply to other matches. So that Limitador will be configured by the Kuadrant controller to not rate limit traffic going
 to port `8080`.
 
+Merging only occurs at the `HTTPRoute` or within individual `HTTPRouteRule` within a route. The merging strategy will
+resolve the individual `HTTPRouteRule` all the policies boil down to and merge according to the Gateway API Policy
+Attachment hierarchy. Targeting a complete `HTTPRoute` is the equivalent of targeting each indidividual `HTTPRouteRule`s
+that composes the route.
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
