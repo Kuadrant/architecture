@@ -10,7 +10,7 @@
 
 Currently both `RateLimitPolicy` and `AuthPolicy` allow for a policy to only affect a _subset_ of the
 traffic on a targeted `HTTPRoute`. This proposal aims at simplifying the scope of a policy to target
-_all_ the traffic of a route.
+_all_ the traffic of a route or the traffic specified by a specific `HTTPRouteRule`'s `HTTPRouteMatch`.
 
 # Motivation
 [motivation]: #motivation
@@ -27,6 +27,13 @@ an `HTTPRoute` is attached to the `Gateway` is the point when that _rlp1_ become
 The idea is to keep things simple (if only for now), so that when traffic is routed through an
 `HTTPRoute` all applicable policies of a `kind` have been merged into a single one _and_ that single
 policy then applies to the whole traffic of that route.
+
+The user might want to qualify traffic to only a specific `HTTPRouteRule` of a given `HTTPRoute`. That would be
+permitted for as long as the `Policy` reflects the exact same set of `HTTPRouteMatch` as the `HTTPRouteRule` defines.
+If two policies target the same `HTTPRouteRule`, they'd be merged according to the Gateway API's merging rules.
+
+With these rules, Kuadrant can "easily" identify what policies need merging and to what `HTTPRoute` they apply, possibly
+reflecting the `status` of the policy on a per `HTTPRouteRule` level.
 
 The current approach, which lets each policy define an arbitrary subset of the traffic to which it
 applies, makes it impossible to know how to merge the different policies into one. Each policy's set
@@ -49,7 +56,8 @@ i.e. your service, according to the
 of a
 [`HTTPRouteRule`](https://gateway-api.sigs.k8s.io/references/spec/#gateway.networking.k8s.io/v1beta1.HTTPRouteRule)
 define on that `HTTPRoute`. All the traffic matched by _any_ `HTTPRouteRule` of a given `HTTPRoute`
-will be affected by which ever `RateLimitPolicy` or `AuthPolicy` you attach to it.
+will be affected by which ever `RateLimitPolicy` or `AuthPolicy` you attach to it, unless the _Policy_ references a
+specific `HTTPRouteRule` by duplicating its `HTTPRouteMatch`es.
 
 Any Kuadrant `Policy` will apply to the entirety of the traffic that is routed through the `HTTPRoute`
 it is eventually attached to. A `Policy` can be attached directly to an `HTTPRoute`. It will apply its
@@ -139,7 +147,7 @@ spec:
 Attaching the `FakeRLPolicy` above to our `HTTPRoute` would not disable rate limiting (as the
 `override` tries to set `enabled` to `false`, as this would still be overruled by the `my-gw` attached
 policy), but the `rps` would be increased to `500` as the `default` of the `HTTPRoute` overrules the
-ones from the `Gateway` (up in the hierarchy). It is important to not that there is no way for the
+ones from the `Gateway` (up in the hierarchy). It is important to note that there is no way for the
 policy to discriminate the traffic it applies to at this stage. All traffic, as described above, would
 be affected by the merge of the two policies:
 
@@ -155,22 +163,71 @@ Any other `HTTPRoute` attached to the `my-gw` would still use the 42 rps limit. 
 `FakeRLPolicy` attached to `my-gw`, the resulting policy would look like this:
 
 ```yaml
-enabled: true
+enabled: false
 rps: 500
 ```
 
 Which would effectively disable all rate limiting traffic to the `foo-route` and ultimately the `foo`
 `Backend`.
 
+Using another example, let's consider a single `HTTPRoute` with two `HTTPRouteRule`s:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: bar-route
+spec:
+  parentRefs:
+  - name: example-gateway
+  hostnames:
+  - "bar.example.com"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /login
+    backendRefs:
+    - name: bar-svc
+      port: 8081
+  - matches:
+    - headers:
+      - type: Exact
+        name: env
+        value: production
+    backendRefs:
+    - name: bar-svc
+      port: 8080
+```
+
+It is important to consider that only _one_ rule will ever be match for any given requests. It makes for a simpler model to have only one "Policy" to also only ever being match, aligning the both behaviors. To apply a policy on the first rule only, the user needs to duplicate that match on the policy targeting `bar-route`:
+
+```yaml
+kind: FakeRLPolicy
+spec:
+  default:
+    rps: 50
+    rules:
+    - matches:
+      - path:
+          type: PathPrefix
+          value: /login
+  targetRef:
+    kind: HTTPRoute
+    name: foo-route
+```
+
+Hereby limiting the amount of hits to our `/login` on port `8081` to a 50 requests per second. That limit _will not_
+apply to other matches. So that Limitador will be configured by the Kuadrant controller to not rate limit traffic going
+to port `8080`.
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
 So there are a couple of things to consider here:
 
-- Being able to clearly identify and merge `HTTPRouteMatch`es from the `HTTPRoute` and apply
-  accordingly to "lower down" resources
-- What about two `Gateway`s having different policies attached to them? (see [Unresolved
-  questions](#unresolved-questions) below)
+- status reporting on "not yet" existing `HTTPRouteRule`, e.g. a Policy declares a set of `matches` that don't (yet?)
+  exist. The policy must _not_ be enforced... yet. But could eventually. This needs proper reporting. 
 
 This is the technical portion of the RFC. Explain the design in sufficient detail that:
 
@@ -186,8 +243,7 @@ the detailed proposal makes those examples work.
 [drawbacks]: #drawbacks
 
 - The use cases this approach doesn't address… 
-- Proliferation of `HTTPRoute` rather than finer grained control at the policy level or at the
-  `HTTPRouteRule` level
+- Not very DRY... the need to keep `HTTPRouteRule`s in sync between the Policy and the `HTTPRoute` is suboptimal.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
@@ -210,13 +266,7 @@ types.
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- How do we deal with multiple `Gateway` having different set of policies attached to them
-  (semantically or atomically?)?
-  - Can we inject the proper config in each of them? Only if all is applicable? What if they are not?
-    What when that changes over time?
-  - Can these then be backed by a single e.g. `Limitador`? (in that case I think yes, as we could
-    inject the "source" gw as a variable and add "synthetic" conditions accordingly)
-- What use cases are we making "overly" complex, because of the `HTTPRoute` redundancy?
+- What use cases are we making "overly" complex, because of the duplication of `HTTPRoute`'s `HTTPRouteMatch` ?
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
@@ -224,5 +274,7 @@ types.
  - Selectors for `HTTPRoute` on which a policy should be "pushed down"
  - Constraint language / bound definitions (which can always be evaluated to an actual value) for
    "lower" policies to operate in: e.g. `minValue: 30` and `maxValue: 100` as an `override`, with a
-   `default` of `value: 50`, so the `value` can be anything within 30 and 100; or just `maxValue:
-   100`, so that `value` defaults to `100`.
+   `default` of `value: 50`, so the `value` can be anything within 30 and 100; or just `maxValue: 100`, 
+   so that `value` defaults to `100`.
+ - Add further "conditions" as not expressable by the `HTTPRouteMatch`ers, i.e. other than `HTTPPathMatch`,
+   `HTTPHeaderMatch`, `HTTPQueryParamMatch` and `HTTPMethod`; e.g. as a way to qualify the remote address.
