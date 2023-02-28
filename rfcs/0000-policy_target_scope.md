@@ -256,6 +256,9 @@ gives, while using _Policy Attachement_ and targeting a specific `HTTPRouteRule`
 
 - What use cases are we making "overly" complex, because of the duplication of `HTTPRoute`'s
   `HTTPRouteMatch` ?
+- Is it fine for the `matches` section to be at the same level as `default`, `override` and `targetRef`?
+  That bit is unclear to me [from the
+  specification](https://gateway-api.sigs.k8s.io/references/policy-attachment/#policy-boilerplate).
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
