@@ -42,7 +42,7 @@ Doing so entails a few things:
 
  - [ ] Get an _Envoy Gateway_ distribution ready to back Kuadrant use cases
    - including _howtos_ on how to "chain" existing ingress'es with gateway resources
- - [ ] Abstract the Gateway Provider behind an [Service Provider interface (SPI)](), to support at least Envoy GW, Istio & OSSM.
+ - [ ] Abstract the Gateway Provider behind an [Service Provider interface (SPI)](https://en.wikipedia.org/wiki/Service_provider_interface), to support at least Envoy GW, Istio & OSSM.
    - which makes for a clear contract any other Gateway API provider would be able to implement
  - [ ] Package different distributions (at the very least GW API included, or pluggeable) as different Operators/images?
 
