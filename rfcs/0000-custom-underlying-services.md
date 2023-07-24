@@ -29,10 +29,10 @@ metadata:
   name: <kuadrant-name>
   namespace: <kuadrant-namespace>
 spec:
-  authorinoTargetRef:
+  authorinoRef:
       name: <authorino-name>
       namespace: <authorino-namespace>
-  limitadorTargetRef:
+  limitadorRef:
       name: <limitador-name>
       namespace: <limitador-namespace>
 ```
@@ -41,8 +41,8 @@ spec:
 
 The **target references** are themselves **custom resources** representing an instance of the service. Specifically:
 
-* `authorinoTargetRef` contains a reference to [Authorino CR](https://github.com/Kuadrant/authorino-operator/blob/6e7b0005a35107aafc01f2cfb7d7e235ea237bbf/config/crd/bases/operator.authorino.kuadrant.io_authorinos.yaml) provided by the [Authorino Operator](https://github.com/Kuadrant/authorino-operator).
-* `limitadorTargetRef` contains a reference to one [Limitador CR](https://github.com/Kuadrant/limitador-operator/blob/d68a13c12a5ab76cc93547a8433a49cfef92f18c/api/v1alpha1/limitador_types.go) provided by the [Limtiador Operator](https://github.com/Kuadrant/limitador-operator)
+* `authorinoRef` contains a reference to [Authorino CR](https://github.com/Kuadrant/authorino-operator/blob/6e7b0005a35107aafc01f2cfb7d7e235ea237bbf/config/crd/bases/operator.authorino.kuadrant.io_authorinos.yaml) provided by the [Authorino Operator](https://github.com/Kuadrant/authorino-operator).
+* `limitadorRef` contains a reference to one [Limitador CR](https://github.com/Kuadrant/limitador-operator/blob/d68a13c12a5ab76cc93547a8433a49cfef92f18c/api/v1alpha1/limitador_types.go) provided by the [Limtiador Operator](https://github.com/Kuadrant/limitador-operator)
 
 Referencing a custom resource provides good level of abstraction and decoupling. The kuadrant control plane must obtain all required information from the targeted custom resources to implement the integration of the services in the data plane. For instance, the Limitador CR provides useful information in the `status` section. First and foremost, if the service is available (condition type `Ready`).
 
@@ -75,6 +75,14 @@ From a kuadrant CR you can only **reference one**, and only one, limitador and a
 **References are optional**
 
 The references are **optional**. In the absence of a reference, the Kuadrant operator will deploy and operate a default deployment (yet to be defined) to support the kuadrant policies.
+
+**References are namespaced**
+
+The references can target custom resources in namespaces other than the Kuadrant's namespace.
+
+**Watch external services**
+
+The Kuadrant's control plane should be watching referenced resources for changes. and react upon any change applying any update to make sure the integration is successful.
 
 ---
 Explain the proposal as if it was implemented and you were teaching it to Kuadrant user. That generally means:
