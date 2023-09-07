@@ -42,7 +42,7 @@ spec:
 The **target references** are themselves **custom resources** representing an instance of the service. Specifically:
 
 * `authorinoRef` contains a reference to [Authorino CR](https://github.com/Kuadrant/authorino-operator/blob/6e7b0005a35107aafc01f2cfb7d7e235ea237bbf/config/crd/bases/operator.authorino.kuadrant.io_authorinos.yaml) provided by the [Authorino Operator](https://github.com/Kuadrant/authorino-operator).
-* `limitadorRef` contains a reference to one [Limitador CR](https://github.com/Kuadrant/limitador-operator/blob/d68a13c12a5ab76cc93547a8433a49cfef92f18c/api/v1alpha1/limitador_types.go) provided by the [Limtiador Operator](https://github.com/Kuadrant/limitador-operator)
+* `limitadorRef` contains a reference to one [Limitador CR](https://github.com/Kuadrant/limitador-operator/blob/d68a13c12a5ab76cc93547a8433a49cfef92f18c/api/v1alpha1/limitador_types.go) provided by the [Limitador Operator](https://github.com/Kuadrant/limitador-operator)
 
 Referencing a custom resource provides good level of abstraction and decoupling. The kuadrant control plane must obtain all required information from the targeted custom resources to implement the integration of the services in the data plane. For instance, the Limitador CR provides useful information in the `status` section. First and foremost, if the service is available (condition type `Ready`).
 
@@ -80,9 +80,85 @@ The references are **optional**. In the absence of a reference, the Kuadrant ope
 
 The references can target custom resources in namespaces other than the Kuadrant's namespace.
 
-**Watch external services**
+**Requirements from the external services**
 
-The Kuadrant's control plane should be watching referenced resources for changes. and react upon any change applying any update to make sure the integration is successful.
+The kuadrant's control plane requirements from the external services:
+* **Data plane external service address**. The gateway, where the data protection is enforced, will integrate with external services and it needs to know about the address of the service. Kuadrant will not update this information, it just need to read it and watch for (external) changes on the service address.
+* **External service configuration**. Kuadrant's control plane needs to configure external service at the application level. The control plane does not care about service deployment details, but it needs a way to dynamically configure the service according to kuadrant's policies. Policies spec are not static and will change in time. The control plane needs mechanisms to configure dynamically external services. Kuadrant's sourced configuration might not be alone. As externally managed service, kuadrant's configuration might co-exist with other external configuration bits. The control plane implements namespacing mechanisms in order to avoid conflict with external configuration. Kuadrant must not change external configuration and only manage its own configuration.
+
+**watching external resources**: The Kuadrant's control plane watches the referenced resources and reacts upon any change on those resources. Depending on the content read, the control plane might apply updates to make sure the integration is successful.
+
+**Limitador service configuration (limits)**
+
+Limitador is configured entirely from the [limitador CRD](https://github.com/Kuadrant/limitador-operator/blob/v0.5.0/api/v1alpha1/limitador_types.go#L43-L63). Both deployment configuration options and limits are included in a single Limitador custom resource. Limits, as of today, are all about application level configuration and this is precisely the only configuration that the control planes cares about.
+
+As of today, latest release of Limitador operator is [v0.5.0](https://github.com/Kuadrant/limitador-operator/releases/tag/v0.5.0). At the top level of the spec section, the [limitador CRD](https://github.com/Kuadrant/limitador-operator/blob/v0.5.0/api/v1alpha1/limitador_types.go#L43-L63) has the following (sub)sections:
+
+```go=
+type LimitadorSpec struct {
+	// +optional
+	Replicas *int `json:"replicas,omitempty"`
+
+	// +optional
+	Version *string `json:"version,omitempty"`
+
+	// +optional
+	Listener *Listener `json:"listener,omitempty"`
+
+	// +optional
+	Storage *Storage `json:"storage,omitempty"`
+
+	// +optional
+	RateLimitHeaders *RateLimitHeadersType `json:"rateLimitHeaders,omitempty"`
+
+	// +optional
+	Limits []RateLimit `json:"limits,omitempty"`
+}
+```
+
+The kuadrant's control plane will be updating the `Limits` list of `RateLimit` objects. The [limitador operator](https://github.com/Kuadrant/limitador-operator) is responsible for propagating the changes and configure Limitador's service accordingly.
+
+The [RateLimit](https://github.com/Kuadrant/limitador-operator/blob/v0.5.0/api/v1alpha1/limitador_types.go#L225-L232) object includes a `namespace` field which is a perfect candidate for namespacing Kuadrant's limits and differentiate from external limits.
+
+```go=
+type RateLimit struct {
+	Conditions []string `json:"conditions"`
+	MaxValue   int      `json:"max_value"`
+	Namespace  string   `json:"namespace"`
+	Seconds    int      `json:"seconds"`
+	Variables  []string `json:"variables"`
+}
+```
+
+Kuadrant's control plane will prefix all the owned and managed `RateLimit` object's `Namespace` field with the `kuadrant/` word.
+
+Example of kuadrant limits co-existing with other external limits:
+
+```yaml
+spec:
+  limits:
+  - conditions:
+    - somekey == "somevalue"
+    max_value: 1
+    namespace: external_limit_namespace
+    seconds: 33
+    variables: []
+  - conditions:
+    - limit.create_toy__88f990c6 == "1"
+    max_value: 5
+    namespace: kuadrant/default/toystore
+    seconds: 10
+    variables: []
+```
+
+Note that if the `default/toystore` rate limit policy is deleted, kuadrant control plane will delete only that limit, leaving as it is the other not owned limit.
+
+**Limitador service address discovery**
+
+
+**Authorino service configuration**
+
+**Authorino service address discovery**
 
 ---
 Explain the proposal as if it was implemented and you were teaching it to Kuadrant user. That generally means:
