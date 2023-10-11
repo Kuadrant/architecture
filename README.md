@@ -37,7 +37,7 @@ The first step in adding a new feature to Kuadrant, or a starting a major change
 
 1. Fork the RFC repo
 1. Use the template `0000-template.md` to copy and rename it into the `rfcs` directory. Change the `template` suffix to something descriptive. But this is still a proposal and as no assigned RFC number to it yet.
-1. Fill the template out. Try to be as thorough as possible. While some sections may not apply to your feature/change request, try to complete as much as possible, as this will be the basis for further discussions.
+1. Fill the template out. Try to be as thorough as possible. While some sections may not apply to your feature/change request, try to complete as much as possible, as this will be the basis for further discussions. Consult the [definitions](definitions.md) for useful terminology guidelines.
 1. Submit a pull request for the proposal. That's when the RFC is open for actual comments by other members of team and the broader community.
 1. The PR is to be handled just like a "code PR", wait on people's review and integrate the feedback provided. These RFCs can also be discussed during our weekly technical call meeting, yet the summary would need to be captured on the PR.
 1. How ever much the orignal proposal changes during this process, never force push or otherwise squash the history, or even rebase your branch. Try keeping the commit history as clean as possible on that PR, in order to keep a trace of how the RFC evolved.
