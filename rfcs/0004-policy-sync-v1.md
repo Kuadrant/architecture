@@ -8,23 +8,21 @@
 # Summary
 [summary]: #summary
 
-Enable policies defined in the control plane (hub) to be synced to the data plane (spoke clusters).
+When a gateway in the hub is targeted by a policy in the hub, enable the gateway controller to be able to sync both the gateway and policy together to spoke clusters.
 
 # Motivation
 [motivation]: #motivation
 
-Currently any policies targeting gateways in the spokes need to be defined in the spokes, and it can be cumbersome, time-consuming and error prone to require these to be duplicated across multiple spoke clusters.
+Currently, any policies targeting gateways in the spokes need to be defined in the spokes, and it can be cumbersome, time-consuming and error prone to require these to be duplicated across multiple spoke clusters.
+
+Gateway-admin has a set of homogeneous clusters and needs to apply per cluster rate limits across the entire set.
+
+Platform-admin with a set of clusters with rate limits applied needs to change rate limit for one particular cluster. 
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-Explain the proposal as if it was implemented and you were teaching it to Kuadrant user. That generally means:
-
-- Introducing new named concepts.
-- Explaining the feature largely in terms of examples.
-- Explaining how a user should *think* about the feature, and how it would impact the way they already use Kuadrant. It should explain the impact as concretely as possible.
-- If applicable, provide sample error messages, deprecation warnings, or migration guidance.
-- If applicable, describe the differences between teaching this to existing and new Kuadrant users.
+Make explicit that OCM policy is different to a gateway API policy, and that this work is not related at all to the OCM Policy framework.
 
 The policy sync system will allow a gateway-admin to create or modify a gateway class at the hub level and specify a series of GVKs for that gatewayClass (for example the AuthPolicy GVK).
 
@@ -37,26 +35,35 @@ When the AuthPolicies are placed on the relevant spokes, they will be manipulate
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-This is the technical portion of the RFC. Explain the design in sufficient detail that:
+### Process overview
+- gateway controller updated to monitor params in gateway class
+- Set up dynamic watches against each listed GVK
+  - error when GVK not present - report in gatewayclass
+  - confirm GVK is a policy - report in gatewayclass if not, don't create watch
+- find all matching GVKs that target reconciling gateway
+- copy GVK CR into manifestwork for same clusters as gateway
+  - mutate GVK CR to target the spoke instance of the gateway
+  - mutate GVK CR to annotate that it came from the hub
+  - add common policy status fields to manifestwork
+    - handle error if status fields are not present?
+- read status from manifestwork and update status in hub GVK CR
+- read errors on gateway if conflicting policies are present in spoke?
 
-- Its interaction with other features is clear.
-- It is reasonably clear how the feature would be implemented.
-- How error would be reported to the users.
-- Corner cases are dissected by example.
+### Policy Hierarchy Details
 
-The section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
+- kuadrant operator to encode policy heirarchy
+    - hub policy overidden by spoke policy overridden by route policy.
 
 # Drawbacks
 [drawbacks]: #drawbacks
 
-Why should we *not* do this?
+cluster-admins can already create policies in spoke clusters that affect spoke level gateways, without this solution.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-- Why is this design the best in the space of possible designs?
-- What other designs have been considered and what is the rationale for not choosing them?
-- What is the impact of not doing this?
+## Consequences of not implementing
+Gateway-admins will have no centralized system for handling spoke-level policies targeting a gateway created there from the hub.
 
 #### We will not be using the policy framework to complete this objective:
 The policy framework is an improvement on the system currently used to place resources on spoke clusters from the hub, essentially removing the need to read the placement decision and manually create manifestworks.
@@ -70,29 +77,14 @@ The current proposal, regarding this work, is to proceed with our current manife
 # Prior art
 [prior-art]: #prior-art
 
-Discuss prior art, both the good and the bad, in relation to this proposal.
-A few examples of what this can include are:
-
-- Does another project have a similar feature?
-- What can be learned from it? What's good? What's less optimal?
-- Papers: Are there any published papers or great posts that discuss this? If you have some relevant papers to refer to, this can serve as a more detailed theoretical background.
-
-This section is intended to encourage you as an author to think about the lessons from other tentatives - successful or not, provide readers of your RFC with a fuller picture.
-
-Note that while precedent set by other projects is some motivation, it does not on its own motivate an RFC.
+No applicable prior art.
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- What parts of the design do you expect to resolve through the RFC process before this gets merged?
-- What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
-- What related issues do you consider out of scope for this RFC that could be addressed in the future independently of the solution that comes out of this RFC?
-
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-Think about what the natural extension and evolution of your proposal would be and how it would affect the platform and project as a whole. Try to use this section as a tool to further consider all possible interactions with the project and its components in your proposal. Also consider how this all fits into the roadmap for the project and of the relevant sub-team.
+If the policy-framework is updated to enable syncing of resources status back to the hub, that could be a good time to refactor the MGC to use the policy framework in place of the current approach of creating manifestworks directly.
 
-This is also a good place to "dump ideas", if they are out of scope for the RFC you are writing but otherwise related.
-
-Note that having something written down in the future-possibilities section is not a reason to accept the current or a future RFC; such notes should be in the section on motivation or rationale in this or subsequent RFCs. The section merely provides additional information.
+This system could mutate over time to dynamically sync more CRDs than policies to spoke clusters.
