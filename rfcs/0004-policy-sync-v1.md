@@ -53,6 +53,7 @@ When the AuthPolicies are placed on the relevant spokes, they will be manipulate
 
 - kuadrant operator to encode policy heirarchy
     - hub policy overidden by spoke policy overridden by route policy.
+    - annotate gateway when a hub policy is overridden in this manner.
 
 # Drawbacks
 [drawbacks]: #drawbacks
@@ -66,13 +67,10 @@ cluster-admins can already create policies in spoke clusters that affect spoke l
 Gateway-admins will have no centralized system for handling spoke-level policies targeting a gateway created there from the hub.
 
 #### We will not be using the policy framework to complete this objective:
-The policy framework is an improvement on the system currently used to place resources on spoke clusters from the hub, essentially removing the need to read the placement decision and manually create manifestworks.
+The policy framework is a system designed to make assertions about the state of a spoke, and potentially take actions based on that state, as such it is not a suitable replacement for manifestworks in the case of syncing resources to a spoke.
 
-As such, we might want to eventually look at migrating to using the system for all hub > spoke placements.
-
-However, the policy framework currently has a significant limitation preventing our usecase, which is that we cannot read the status back from the resources created in the spoke.
-
-The current proposal, regarding this work, is to proceed with our current manifestwork solution, and migrate all hub > spoke placement logic if the policy framework reaches a point that it is more feasible.
+### We could eventually migrate from manifestworks to manifestworkreplicasets
+Manifestworkreplicasets maybe a future improvement that we could change the MGC to use but not as part of this RFC.
 
 # Prior art
 [prior-art]: #prior-art
