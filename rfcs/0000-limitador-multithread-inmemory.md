@@ -125,21 +125,74 @@ be the difference between the expected value of the counter and the value that t
 stored value is **lower** than the expected one. Usually, this would happen when trying to revert a wrongly updated counter
 twice in a row, for example, when trying to revert the _overshoot_ from the previous example.
 
-These scenarios will be explained in detail in the [Reference-level explanation](#reference-level-explanation) section.
-
-
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-This is the technical portion of the RFC. Explain the design in sufficient detail that:
+Enhancing the Limitador service to process requests in parallel and being capable of operating in the previously described
+modes, entails considering various implications.
 
-- Its interaction with other features is clear.
-- It is reasonably clear how the feature would be implemented.
-- How error would be reported to the users.
-- Corner cases are dissected by example.
+Firstly, ensuring consistency in storing counter values across multiple threads is paramount to maintinging the integrity
+of rate limiting operations. This involves implementing robust concurrency control mechanisms to prevent race conditions
+and data corruption when accessing and updating shared counter data.
 
-The section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
+Additionally, choosing the data structure that will store the counter values must prioritize efficiency and thread safety
+to handle concurrect access effectively.
+
+Finally, considering that initially we will implement the setup of the mode at the service initialization time, balancing
+the need for strict adherence to defined limits with the desire to maximize throughput presents a trade-off that we could
+give the user the ability to manage.
+
+
+## Implementation guidelines
+
+### Data structures
+
+Limitador already possess a data structure to store the limit counters that also stores the expiration time of the counter,
+the type is named `AtomicExpiringCounter`. This data structure is a thread-safe counter that can be incremented and
+decremented atomically, and it also has a methods to check the value at a certain time and update the counter.
+
+The collection of these counters should be consistent across threads and also being able to quickly sort and retrieve the
+counters associated to a certain namespace and limits definitions. Currently, the data structure can't provide this
+much desired functionality, so we need to introduce a new data structure that can provide this.
+
+### Request handling and concurrency control
+
+When a request comes in, Limitador needs to determine the appropriate Counter object(s) based on the request's namespace
+and limit definitions. Taking into account the collection will be in ascending order by expiration time, iterating over the
+counter objects associated with those premises and performing the following steps:
+
+1. Retrieve the Counter object from the collection.
+2. Compare the current timestamp with the expiration time of the counter to determine if the request falls within the
+sliding window
+3. If the request falls within the window, increment the hit count of the Counter.
+4. If the hit count exceeds the limit defined for the Counter, deny the request.
+5. If the request passes all limit checks, allow it to proceed.
+
+To ensure that these operations are performed atomically and consistently across threads, we need to use fine-grained
+locking or atomic operations when accessing and updating the counter data in the collection. Using synchronization
+primitives such as mutexes or atomic types will help to protect the integrity of the counter data from concurrent modifications.
+
+### Configuration and mode selection
+
+The configuration of the service will be done at the initialization time, and it will be done through the command line as
+described in the [Guide-level explanation](#guide-level-explanation) section.
+
+#### Accuracy mode
+
+* In Accuracy mode, we need to strictly adhere to the defined limits by denying requests that exeed the limits for each
+Counter Object.
+* Check and update Counter values atomically to maintin consistency and prevent race conditions.
+* Enforce rate limits accurately by comparing the number of hits within the sliding window to the defined limit.
+
+#### Throughput mode
+
+* In Throughput mode, we need to prioritize maximizing the number of requests that can be processed concurrently over
+strict adherence to defined limits.
+* Allowing request to proceed even if they temproarly exceed the defined limits, favouring higher request rates.
+* We should use appropriate concurrency mechanisms and CAS oeprations to handle request efficiently while maintaining
+consistency in the counter data. We might not need to use locks, but we need to be careful with the CAS operations nonetheless.
+
 
 # Drawbacks
 [drawbacks]: #drawbacks
