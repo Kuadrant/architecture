@@ -19,13 +19,115 @@ However, this would introduce some particular behaviour regarding the _Accuracy_
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-Explain the proposal as if it was implemented and you were teaching it to Kuadrant user. That generally means:
+In order to achieve the desired multi-threading functionality, we'd need to make sure that the user understands the
+trade-offs that this approach implies and that they are aware of the possible consequences of using it, and how to
+configure the service in order to obtain the desired behaviour. Regarding this last statement, we will need to
+introduce an interface that allows the user to meet their requirements.
 
-- Introducing new named concepts.
-- Explaining the feature largely in terms of examples.
-- Explaining how a user should *think* about the feature, and how it would impact the way they already use Kuadrant. It should explain the impact as concretely as possible.
-- If applicable, provide sample error messages, deprecation warnings, or migration guidance.
-- If applicable, describe the differences between teaching this to existing and new Kuadrant users.
+A couple of concepts we need to define in order to understand the proposal:
+* **Accuracy**: The _accuracy_ is defined by the service's ability to enforce the limits in an exact factual way. This means
+  that if the service is configured to allow 10 requests per second, it will only allow 10 requests per second, and
+  not 11 or 9. In terms of observability, the counters, will be monotonically strictly decreasing without repeating any
+  value given per service.
+* **Throughput**: The _throughput_ of a service is defined by the number of requests that the service can process in a
+  given time. As a consequence of having higher throughput, we need to introduce two more concepts:
+  * **Overshoot**: The _overshooting_ of a limit counter is defined by the difference between the _expected_ value of the counter
+    and the value that the counter has in the storage, when the stored value is **greater** than the expected one.
+  * **Undershoot**: The _undershooting_ of a limit counter is defined the same way the **Overshoot** is, but the stored value
+    is **lower** than the expected one.
+
+## Behaviour
+
+When using the multi-threading approach, we need to understand the trade-offs that we are making. The main one is that
+it's not possible to have both _Accuracy_ and _Throughput_ at the same time. This means that we need to choose one of
+them and configure the service accordingly, favouring accuracy comes close to the current single thread implementation,
+or concede to _overshoot_ or _undershoot_ in order to have higher throughput. However, we can still have decent values for both of them, if we choose to
+introduce a more complex implementation (thread pools, PID control, etc.).
+
+[IMG Accuracy vs Throughput]
+
+## Configuration
+
+In order to configure Limitador, we need to introduce a clear interface that allows the user to choose the desired
+behaviour. This interface should be able to seamlessly integrate with the current configuration options, and at least
+at the first implementation, it should be able to be configured at initialization time. The fact that we are using
+multi-threading or a single thread, it's not something that the user should be aware of, so we need to abstract that
+away from them, in the end, they would only care about the "precision" of the service.
+
+### Example
+
+In this example, we are configuring the service to use the _InMemory_ storage and to use the _Throughput_ mode.
+```bash
+limitador-server --mode=throughput memory
+```
+
+In a future iteration, we might be able to provide a richer interface that allows the user to configure the service
+in a balanced and/or more granular way.
+```bash
+limitador-server --mode=balanced --accuracy=0.1 --throughput=0.9 memory
+```
+
+or simply
+```bash
+limitador-server --accuracy=0.1 --throughput=0.9 memory
+```
+
+## Implications
+
+### Accuracy
+
+When using the _Accuracy_ mode, the service will behave in a similar way to the current implementation, most likely
+in a single thread. This means that the service will be able to process one request at a time, and the _accuracy_ of
+the limit counters will always be as expected. This mode is the one that one should use when it's important to enforce
+the limits as accurately as possible, and the throughput is not a concern.
+
+### Throughput
+
+When using the _Throughput_ mode, the service will fully behave in a multi-threaded way, which means that it will be able
+to process multiple requests at the same time. However, this will introduce some particular behaviour regarding the
+_accuracy_ of the limit counters, which will be affected by the _overshoot_ and _undershoot_ concepts.
+
+#### Overshoot
+
+Given the following (simplified) limit definitions:
+
+Limit 1:
+```yaml
+namespace: example.org
+max_value: 4
+seconds: 60
+```
+This could be translated to _any_ request to the namespace `example.org` can be authorized up to 4 times in a span
+of 1 minute.
+
+Limit 2:
+```yaml
+namespace: example.org
+max_value: 2
+seconds: 1
+conditions:
+  - "req.method == 'POST'"
+```
+While this one would be translated to _POST_ requests to the namespace `example.org` can be authorized up to 2 times
+in a span of 1 second.
+
+Now imagine that we have the following requests happening at the same time in parallel: `POST`, `POST`, `POST`, `GET`,
+`GET`; it could happen that the service authorizes the first two `POST` requests and updates both counters to 2, then the third
+`POST` request is not authorized *but* the counter of limit 1 is updated to 3 (wrongly), and finally then only one `GET` request
+that comes in would be authorized, leaving one wrongly denied. In this case, we would have an _overshoot_ of 1 in the
+limit 1 counter, limiting the request to the service for the next 60 seconds.
+
+#### Undershoot
+
+This behaviour is the opposite of the _overshoot_ one, and it happens when the service authorizes a request that should
+have been denied. This scenario is less likely to happen, but it's still possible. In this case, the _undershoot_ would
+be the difference between the expected value of the counter and the value that the counter has in the storage, when the
+stored value is **lower** than the expected one. Usually, this would happen when trying to revert a wrongly updated counter
+twice in a row, for example, when trying to revert the _overshoot_ from the previous example.
+
+These scenarios will be explained in detail in the [Reference-level explanation](#reference-level-explanation) section.
+
+
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
