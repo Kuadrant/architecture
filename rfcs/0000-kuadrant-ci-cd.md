@@ -23,13 +23,38 @@ maintain and that are not very well integrated with each other.
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-Explain the proposal as if it was implemented and you were teaching it to Kuadrant user. That generally means:
+## Current process
 
-- Introducing new named concepts.
-- Explaining the feature largely in terms of examples.
-- Explaining how a user should *think* about the feature, and how it would impact the way they already use Kuadrant. It should explain the impact as concretely as possible.
-- If applicable, provide sample error messages, deprecation warnings, or migration guidance.
-- If applicable, describe the differences between teaching this to existing and new Kuadrant users.
+Before we dive into the new process, let's take a look at the current one. The current process is based on the
+independent build and release of each service (Authorino and Limitador), their respective Operators and the WasmShim
+for then building and releasing the Kuadrant Operator. It's important that we follow this order because the
+Kuadrant Operator depends on the WasmShim, and the Authorino and Limitador Operators. The process is as follows:
+
+### Authorino
+A particularity of Authorino is that it follows the [Controller Pattern](https://kubernetes.io/docs/concepts/architecture/controller/#controller-pattern),
+it's implemented as a Kubernetes controller thanks to the [Operator SDK](https://sdk.operatorframework.io/) and
+[Kustomize](https://kustomize.io/).
+
+#### Artifacts
+The deliverable artifacts are the [Authorino image](https://quay.io/repository/kuadrant/authorino)
+and its [manifests](https://github.com/Kuadrant/authorino/blob/main/install/kustomization.yaml), the AuthConfig CRD and
+role definitions.
+
+#### Build / Release
+The build process is triggered by a particular GitHub Action that runs on demand (workflow_dispatch) named "Build and push image",
+and to build an image version “v0.X.Y” of Authorino, the following steps are needed:
+
+1. Pick a <git-ref> (SHA-1) as source.
+Create a new tag and named release “v0.X.Y”. Make sure to write change notes highlighting all the new features, bug fixes,
+enhancements, etc ([example](https://github.com/Kuadrant/authorino/releases/tag/v0.9.0)).
+
+2. Run the GHA ‘Build and push images’ for the “v0.X.Y” tag. This will cause a new image to be built and pushed to quay.io/kuadrant/authorino.
+
+3. Create the release and release notes on [Github](https://github.com/Kuadrant/authorino/releases/new) using the tag from above, named: `Authorino vM.m.d`
+
+Notes:
+PRs merged to the main branch of Authorino cause a new image to be built (GH Action) and pushed automatically to
+quay.io/kuadrant/authorino:<git-ref> – the quay.io/kuadrant/authorino:latest tag is also moved to match the latest <git-ref>.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
