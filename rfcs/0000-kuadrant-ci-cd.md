@@ -143,6 +143,34 @@ index dd2f311..011a2cd 100644
 +version = "1.4.0-dev"
  ```
 
+### WasmShim
+A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitador. It's built using an automated
+GitHub Action and published to quay.io/kuadrant/wasm-shim.
+
+#### Artifacts
+The deliverable artifact is the [WasmShim image](https://quay.io/repository/kuadrant/wasm-shim).
+
+#### Build / Release
+The before mentioned GitHub Action is triggered by a push to any branch of the repository. It builds the image and
+pushes it to quay.io/kuadrant/wasm-shim:<git-ref> and quay.io/kuadrant/wasm-shim:latest.
+
+In order to obtain a new release of the WasmShim, the following steps need to be followed:
+
+1. A branch needs to be created, e.g. `release-0.3.0`
+
+```sh
+git checkout -b release-0.3.0
+```
+
+2. A new tag needs to be created, e.g. `v0.3.0` and pushed to remote
+
+```sh
+git tag -a v0.3.0 -m "[tag] WasmShim v0.3.0"
+git push origin v0.3.0
+```
+
+3. The GitHub Action will be triggered and will build and push the image to quay.io/kuadrant/wasm-shim:v0.3.0
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
