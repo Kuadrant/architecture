@@ -56,6 +56,93 @@ Notes:
 PRs merged to the main branch of Authorino cause a new image to be built (GH Action) and pushed automatically to
 quay.io/kuadrant/authorino:<git-ref> – the quay.io/kuadrant/authorino:latest tag is also moved to match the latest <git-ref>.
 
+### Limitador
+In the case of Limitador, it's a completely different story. It's a Rust project, that it's split into a library (crate)
+and a server. The server is a binary that uses the library, and it's built using the [Cargo](https://doc.rust-lang.org/cargo/)
+build system. The library is published to [crates.io](https://crates.io/crates/limitador) and the server is published to
+quay.io/kuadrant/limitador.
+
+#### Artifacts
+The deliverable artifacts are the [Limitador service image](https://quay.io/repository/kuadrant/limitador) and the Rust
+crate published to [crates.io](https://crates.io/crates/limitador).
+
+#### Build / Release
+
+##### `limitador` crate to crates.io
+
+1. A branch needs to be created, e.g. `release-0.5.0`
+```sh
+git checkout -b release-0.5.0
+```
+
+2. Remove the `-dev` suffix from both `Cargo.toml`
+ ```diff
+diff --git a/limitador-server/Cargo.toml b/limitador-server/Cargo.toml
+index dd2f311..b555df8 100644
+--- a/limitador-server/Cargo.toml
++++ b/limitador-server/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "limitador-server"
+-version = "1.3.0-dev"
++version = "1.3.0"
+diff --git a/limitador/Cargo.toml b/limitador/Cargo.toml
+index 3aebf9d..d17b92b 100644
+--- a/limitador/Cargo.toml
++++ b/limitador/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "limitador"
+-version = "0.5.0-dev"
++version = "0.5.0"
+ ```
+
+3. Commit the changes
+```sh
+git commit -am "[release] Releasing Crate 0.5.0 and Server 1.3.0"
+```
+
+4. Create a tag named after the version, with the `crate-v` prefix and push it to remote
+```sh
+git tag -a crate-v0.5.0 -m "[tag] Limitador crate v0.5.0"
+git push origin crate-v0.5.0
+```
+
+5. Manually run the `Release crate` workflow action on [Github](https://github.com/Kuadrant/limitador/actions/workflows/release.yaml) providing the version to release in the input box,
+e.g. `0.5.0`, if all is correct, this should push the release to [crates.io](https://crates.io/crates/limitador/versions)
+
+6. Create the release and release notes on [Github](https://github.com/Kuadrant/limitador/releases/new) using the tag from above, named: `Limitador crate vM.m.d`
+
+
+##### `limitador-server` container image to quay.io
+
+1. Create a branch for your version with the `v` prefix, e.g. `v1.3.0`
+2. Make sure your `Cargo.toml` is reflecting the proper version, see above
+3. Push the branch to remote, which should create a matching release to quay.io with the tag name based of your branch, i.e. in this case `v1.3.0`
+4. Create a tag with the `server-v` prefix, e.g. `server-v1.3.0`
+5. Push the tag to Github
+6. Create the release and release notes on [Github](https://github.com/Kuadrant/limitador/releases/new) using the tag from above, named: `vM.m.d`
+7. Delete the branch, only keep the tag used for the release
+
+##### After the release
+
+1. Create a `next` branch off `main`
+2. Update the _both_ Cargo.toml to point to the next `-dev` release
+3. Create PR
+4. Merge to `main`
+
+ ```diff
+diff --git a/limitador-server/Cargo.toml b/limitador-server/Cargo.toml
+index dd2f311..011a2cd 100644
+--- a/limitador-server/Cargo.toml
++++ b/limitador-server/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "limitador-server"
+-version = "1.3.0-dev"
++version = "1.4.0-dev"
+ ```
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
