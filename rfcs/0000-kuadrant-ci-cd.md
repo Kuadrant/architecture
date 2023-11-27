@@ -56,6 +56,30 @@ Notes:
 PRs merged to the main branch of Authorino cause a new image to be built (GH Action) and pushed automatically to
 quay.io/kuadrant/authorino:<git-ref> – the quay.io/kuadrant/authorino:latest tag is also moved to match the latest <git-ref>.
 
+### Authorino Operator
+The Authorino operator is similar to its operand, it fully follows the [Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/)
+and to build its manifests relies on [Kustomize](https://kustomize.io/).
+
+#### Artifacts
+Its artifacts are the [Authorino Operator image](https://quay.io/repository/kuadrant/authorino-operator),
+[Authorino Operator Bundle](https://quay.io/repository/kuadrant/authorino-operato-bundle),
+[Authorino Operator catalog](https://quay.io/repository/kuadrant/authorino-operator-catalog) and regarding its [manifests](https://github.com/Kuadrant/authorino-operator/blob/main/config/crd/bases/operator.authorino.kuadrant.io_authorinos.yaml)
+the Authorino CRD and role definitions.
+
+#### Build / Release
+To release a version “v0.W.Z” of Authorino Operator, these are the steps needed:
+
+1. Pick a stable (released) version “v0.X.Y” of the operand known to be compatible with operator’s image for “v0.W.Z”; if needed, make a release of the operand first.
+2. Run the [Github Action Release operator](https://github.com/Kuadrant/authorino-operator/actions/workflows/release.yaml);
+make sure to fill all the fields:
+  * Branch containing the release workflow file – default: ‘main’
+  * Commit SHA or branch name of the operator to release – usually: ‘main’
+  * Operator version to release (without prefix) – i.e. ‘0.W.Z’
+  * Authorino version the operator enables installations of (without prefix) – i.e. ‘0.X.Y’
+  * If the release is a prerelease
+  * Bundle and catalog channels (comma-separated) – usually: 'stable'
+3. Run the GHA ‘Build and push images’ for the “v0.W.Z” tag, specifying ‘Authorino version’ equals to “0.X.Y” (without the leading “v”). This will cause the new images (bundle and catalog included) to be built and pushed to the corresponding repos in quay.io/kuadrant.
+
 ### Limitador
 In the case of Limitador, it's a completely different story. It's a Rust project, that it's split into a library (crate)
 and a server. The server is a binary that uses the library, and it's built using the [Cargo](https://doc.rust-lang.org/cargo/)
