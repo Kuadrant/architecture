@@ -229,6 +229,45 @@ git push origin v0.3.0
 
 3. The GitHub Action will be triggered and will build and push the image to quay.io/kuadrant/wasm-shim:v0.3.0
 
+### Kuadrant Operator
+The final step of the process is to build and release the Kuadrant Operator. This is a Go project that follows the
+[Operator Pattern](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) following the [Operator SDK](https://sdk.operatorframework.io/)
+and to build its manifests relies on [Kustomize](https://kustomize.io/) as the previous operators mentioned.
+
+#### Artifacts
+The deliverable artifacts are the [Kuadrant Operator image](https://quay.io/repository/kuadrant/kuadrant-operator),
+[Kuadrant Operator Bundle](https://quay.io/repository/kuadrant/kuadrant-operato-bundle),
+[Kuadrant Operator image](https://quay.io/repository/kuadrant/kuadrant-operator) and regarding its
+[manifests](https://github.com/Kuadrant/kuadrant-operator/tree/main/bundle) we can find the Kuadrant CRD, RateLimitPolicy
+CRD, AuthPolicy CRD and role definitions.
+
+#### Build / Release
+The build and release process of this operator is similar to the Limitador Operator one, but its dependencies are more,
+including the WasmShim, the Authorino Operator and the Limitador Operator. The steps are as follows:
+
+1. A stable released version of Limitador Operator, Authorino Operator and WasmShim images are needed.
+
+2. Create a branch named after the version, e.g. `release-0.5.0`
+```sh
+git checkout -b release-0.5.0
+```
+
+3. Tag the branch with the `v` prefix, e.g. `v0.5.0`, push the tag to remote
+```sh
+git tag -a v0.5.0 -m "[tag] Kuadrant Operator v0.5.0"
+git push origin v0.5.0
+```
+
+4. Run the GHA 'Build Images' with the following parameters:
+* Branch containing the release workflow file – example: `release-0.5.0`, default: `main`
+* Operator bundle version (without prefix) - example: `0.5.0`, default: `0.0.0`
+* Operator tag (with prefix) - example: `v0.5.0`, default: `latest`
+* Authorino Operator bundle version (without prefix) - example: `0.10.0`, default: `latest`
+* Limitador Operator bundle version (without prefix) - example: `0.7.0`, default: `latest`
+* WASM Shim version (without prefix) – example: `0.3.0`, default: `latest`
+* Kuadrant operator replaced version (without prefix) - example: `0.4.1`, default: `0.0.0-alpha`
+* Bundle and catalog channels (comma-separated) – example: `stable`, default: `preview`
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
