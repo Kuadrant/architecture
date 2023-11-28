@@ -167,6 +167,40 @@ index dd2f311..011a2cd 100644
 +version = "1.4.0-dev"
  ```
 
+### Limitador Operator
+This operator is also implemented using the [Operator SDK](https://sdk.operatorframework.io/) and
+[Kustomize](https://kustomize.io/).
+
+#### Artifacts
+The deliverable artifacts are the [Limitador Operator image](https://quay.io/repository/kuadrant/limitador-operator),
+[Limitador Operator Bundle](https://quay.io/repository/kuadrant/limitador-operato-bundle),
+[Limitador Operator image](https://quay.io/repository/kuadrant/limitador-operator) and regarding its
+[manifests](https://github.com/Kuadrant/limitador-operator/tree/main/bundle/manifests) the Limitador CRD and role
+definitions.
+
+#### Build / Release
+This build process is similar to the Authorino Operator one, but it's triggered by a different GitHub Action
+(Build Images) which is a `workflow_dispatch` one, and it's triggered manually. The steps are as follows:
+
+1. Pick a stable (released) version “v0.X.Y” of the operand (Limitador) known to be compatible with operator’s image for
+“v0.W.Z”; if needed, make a release of the operand first.
+2. Create a branch named after the version, e.g. `release-0.7.0`
+```sh
+git checkout -b release-0.7.0
+```
+3. Tag the branch with the `v` prefix, e.g. `v0.7.0`, push the tag to remote
+```sh
+git tag -a v0.7.0 -m "[tag] Limitador Operator v0.7.0"
+git push origin v0.7.0
+```
+4. Run the GHA 'Build Images' with the following parameters:
+  * Branch containing the release workflow file – example: `release-0.7.0`, default: `main`
+  * Operator bundle version (without prefix) - example: `0.7.0`, default: `0.0.0`
+  * Operator tag (with prefix) - example: `v0.7.0`, default: `latest`
+  * Limitador version (without prefix) – example: ‘1.3.0’, default: `0.0.0`
+  * Limitador operator replaced version (without prefix) - example: `0.6.0`, default: `0.0.0-alpha`
+  * Bundle and catalog channels (comma-separated) – example: `stable`, default: `preview`
+
 ### WasmShim
 A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitador. It's built using an automated
 GitHub Action and published to quay.io/kuadrant/wasm-shim.
