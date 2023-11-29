@@ -25,6 +25,9 @@ maintain and that are not very well integrated with each other.
 
 ## Current process
 
+<details>
+<summary>Summary of the current process</summary>
+
 Before we dive into the new process, let's take a look at the current one. The current process is based on the
 independent build and release of each service (Authorino and Limitador), their respective Operators and the WasmShim
 for then building and releasing the Kuadrant Operator. It's important that we follow this order because the
@@ -267,6 +270,8 @@ git push origin v0.5.0
 * WASM Shim version (without prefix) – example: `0.3.0`, default: `latest`
 * Kuadrant operator replaced version (without prefix) - example: `0.4.1`, default: `0.0.0-alpha`
 * Bundle and catalog channels (comma-separated) – example: `stable`, default: `preview`
+
+</details>
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
