@@ -271,6 +271,32 @@ git push origin v0.5.0
 * Kuadrant operator replaced version (without prefix) - example: `0.4.1`, default: `0.0.0-alpha`
 * Bundle and catalog channels (comma-separated) – example: `stable`, default: `preview`
 
+
+### OperatorHub
+The current 3 operators (Authorino, Limitador and Kuadrant) are published to [OperatorHub](https://operatorhub.io/).
+This is done manually, copying the released bundle from each operator and opening a PR to the [community-operators](https://github.com/k8s-operatorhub/community-operators/)
+and [community-operators-prod](https://github.com/redhat-openshift-ecosystem/community-operators-prod/) repositories.
+The documentation for this process can be found in the [contribution section of OperatorHub](https://operatorhub.io/contribute).
+
+A brief summary of the process is as follows:
+
+1. In each community-operators repository, create a branch named after the name of the operator and its version, following
+the template `[operator-name]-[semantic-version]`, e.g.`kuadrant-operator-v0.5.0` and create a directory within the
+`operators/[operator-name]/[semantic-version]` path.
+```sh
+git checkout -b kuadrant-operator-v0.5.0
+mkdir -p operators/kuadrant-operator/0.5.0
+```
+
+2. Copy the bundle and bundle.Dockerfile from the released operator branch to the `community-operators` repository directory just created.
+```sh
+cp -r [path-to]/kuadrant-operator/bundle/* [path-to]/community-operators/operators/kuadrant-operator/0.5.0/
+cp [path-to]/kuadrant-operator/bundle.Dockerfile [path-to]/community-operators/operators/kuadrant-operator/0.5.0/
+```
+
+3. Create a PR to the `community-operators` (same for `community-operators-prod`) repository and follow the guidelines
+exposed in the auto generated description of the PR.
+
 </details>
 
 # Reference-level explanation
