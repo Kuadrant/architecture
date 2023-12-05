@@ -299,6 +299,27 @@ exposed in the auto generated description of the PR.
 
 </details>
 
+## New process
+The new process ideally should be as simple as possible, and should be able to be triggered by any person, process and
+set of events (particular commits, tags, merge, etc) that needs the artifacts. It also should be able to be repeated
+in a consistent way and without the need of any human setting variables or parameters at the time of triggering it
+(at least for the most common cases).
+
+Given our current process, we can identify some similarities and particularities between the different components:
+
+* All of them are built using a CI/CD tool (GitHub Actions) and published to a container registry (quay.io).
+* Not all of them are built using the same build system (Cargo, Go, Operator SDK, etc.).
+* 3 of them follow the Operator Pattern and are built using the Operator SDK (Authorino, Limitador and Kuadrant operators).
+* 2 of them are Rust projects (Limitador and WASMShim).
+* There's a dependency between the different components, Kuadrant Operator depends on Authorino and Limitador Operators,
+and the WasmShim; while the before mentioned operators depend on their operands (Authorino and Limitador).
+* There's no clear steps defined regarding the approval of the deliverables (images, manifests, etc.) and their
+publication to our website, Github releases, OperatorHub, etc.
+
+Given the before mentioned points, we can identify some common steps that can be extracted and reused for all the
+components, and some particularities that need to be addressed in a different way, but the overall
+process should be the same for all of them in terms of triggering it and the steps that need to be followed.
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
