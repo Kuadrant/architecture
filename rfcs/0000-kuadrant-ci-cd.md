@@ -320,6 +320,42 @@ Given the before mentioned points, we can identify some common steps that can be
 components, and some particularities that need to be addressed in a different way, but the overall
 process should be the same for all of them in terms of triggering it and the steps that need to be followed.
 
+### Option 1: Release File
+The first option is to create a file in the root of each repository that contains the information needed to build and
+release the component. This file could be a YAML, TOML or simply a key-value file. The file should contain the following
+information:
+
+* Component/s name/s and version/s (In the case of Limitador, it should contain the name and version of the crate and the name of the server).
+* Dependencies name/s and version/s.
+* Replace version (in the case of the Operators, this version is needed for the OLM upgrade process).
+
+This file should be updated every time a new release is made, and it should be committed to the repository to the release
+branch. This file will be used by the CI/CD tool to build and release the component. In the case of the main branch, the
+file will include the floating tag `latest` for its version and its dependencies.
+
+The CI/CD workflow will be triggered by a specific event (tag, commit, etc.) and will read the file and use the
+information to build and release the component. The workflow will be the same for all the components, and it will
+contain the following steps:
+
+Manual steps:
+1. Create a new branch from the main branch or cherry-picking the commits that need to be released.
+2. Update the release file with the new version/s and dependencies.
+3. Commit the changes to the release branch.
+4. Create a new tag with the new version following the semantic versioning vX.Y.Z.
+5. Push the tag to the repository.
+6. After the release workflow is done:
+   * approve the Github draft release and publish it.
+   * change the draft PR on OperatorHub to ready to review.
+
+Automatic steps on the CI/CD workflow:
+1. Checkout the repository.
+2. Read the file and extract the information.
+3. Builds the manifests and images.
+4. Create a draft release on Github with the information extracted from the file.
+5. Build the component after running verification and tests.
+6. Publish the component to the container registry.
+
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
