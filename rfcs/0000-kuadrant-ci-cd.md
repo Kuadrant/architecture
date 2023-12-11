@@ -809,16 +809,10 @@ the approval of the OperatorHub PR, communication (blogpost, slack, etc).
 # Prior art
 [prior-art]: #prior-art
 
-Discuss prior art, both the good and the bad, in relation to this proposal.
-A few examples of what this can include are:
-
-- Does another project have a similar feature?
-- What can be learned from it? What's good? What's less optimal?
-- Papers: Are there any published papers or great posts that discuss this? If you have some relevant papers to refer to, this can serve as a more detailed theoretical background.
-
-This section is intended to encourage you as an author to think about the lessons from other tentatives - successful or not, provide readers of your RFC with a fuller picture.
-
-Note that while precedent set by other projects is some motivation, it does not on its own motivate an RFC.
+* [Authorino release process](https://docs.google.com/document/d/1tLveyv8Zwe0wKyfUTWOlEnFeMB5aVGqIVDUjVYWax0U)
+* [Limitador release process](https://github.com/Kuadrant/limitador/blob/main/RELEASE.md)
+* [Limitador Operator](https://github.com/Kuadrant/limitador-operator/tree/main/.github/workflows) and
+[Kuadrant operator workfdlows](https://github.com/Kuadrant/kuadrant-operator/tree/main/.github/workflows)
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
