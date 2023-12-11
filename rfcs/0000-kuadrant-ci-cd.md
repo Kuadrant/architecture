@@ -379,6 +379,31 @@ Automatic steps on the CI/CD workflow:
 4. Publish the component/s to the container registry.
 5. Create a draft release on Github with the information provided by the user.
 
+### Option 3: Release Workflow
+The third option is to create a Github Action that will be manually triggered by the user. The action will be the same
+for all the components, but will prompt the user for the specific information needed, such as the component's name and
+version, its dependencies, etc. It will also fail if there's missing information or if the information provided is not
+valid. The action will contain the following steps:
+
+Manual steps:
+1. From the Actions tab, select the Release action.
+2. Introduce the information needed. I.e.:
+   * Component/s name/s and version/s.
+   * Dependencies name/s and version/s.
+   * Replace version (in the case of the Operators, this version is needed for the OLM upgrade process).
+3. Run the action.
+4. After the release workflow is done:
+   * approve the Github draft release and publish it.
+   * change the draft PR on OperatorHub to ready to review.
+
+Automatic steps on the CI/CD workflow:
+1. Checkout the repository.
+2. Build the component manifests and bundle.
+3. Run tests and verify manifests, bundle, etc.
+4. Build the component/s image/s.
+5. Publish the component/s to the container registry.
+6. Create a draft release on Github with the information provided by the user.
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
