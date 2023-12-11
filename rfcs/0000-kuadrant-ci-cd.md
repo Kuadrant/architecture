@@ -356,6 +356,29 @@ Automatic steps on the CI/CD workflow:
 6. Publish the component to the container registry.
 
 
+### Option 2: Release Script
+The second option involves creating a script that will be used with the same purpose of releasing the component's deliverables.
+The script will be a bash script that will prompt the user for the specific information needed, such as the component's
+name and version, its dependencies, etc. It will also fail if there's missing information or if the information provided
+is not valid. The script will be the same for all the components, and it will contain the following steps:
+
+Manual steps:
+1. Create a new branch from the main branch or cherry-picking the commits that need to be released.
+2. Run the script and provide the information needed.
+3. Commit the changes to the release branch.
+4. Create a new tag with the new version following the semantic versioning vX.Y.Z.
+5. Push the tag to the repository.
+6. After the release workflow is done:
+   * approve the Github draft release and publish it.
+   * change the draft PR on OperatorHub to ready to review.
+
+Automatic steps on the CI/CD workflow:
+1. Checkout the repository.
+2. Run tests and verify manifests, bundle, etc.
+3. Build the component/s.
+4. Publish the component/s to the container registry.
+5. Create a draft release on Github with the information provided by the user.
+
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
