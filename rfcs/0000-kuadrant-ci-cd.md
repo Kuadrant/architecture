@@ -801,9 +801,10 @@ the approval of the OperatorHub PR, communication (blogpost, slack, etc).
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-- Why is this design the best in the space of possible designs?
-- What other designs have been considered and what is the rationale for not choosing them?
-- What is the impact of not doing this?
+* The current process is not consistent and it's not easy to follow without learning the details of each component.
+* It will allow us to create a set of common steps that can be reused for all the components.
+* It will be easier to maintain and extend.
+* It will allow other non-technical people to trigger the process.
 
 # Prior art
 [prior-art]: #prior-art
