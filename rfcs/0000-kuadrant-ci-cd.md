@@ -583,6 +583,155 @@ limitador_version: 1.4.0-qe-test
 replaces_version: 0.7.0
 ```
 
+## Release Script
+The release script process will be similar to the release file one, but instead of updating a file that will be used
+as input for the needed script or workflow, the user will be prompted for the information needed to build and release
+the component.
+
+### Limitador
+In order to prepare the release, the following steps need to be followed:
+
+1. Create a new branch with the selection of commits that need to be released.
+```sh
+git checkout -b release-1.4.0
+```
+
+2. Run the release script/makefile target.
+   This will communicate the user the parameters needed when ran without any, or it could prompt the user for them.
+   When successfully ends applying the changes, it will commit them to the release branch with message
+   "[release] Releasing Limitador crate 0.6.0 and Server 1.4.0".
+
+```sh
+./release.sh limitador-server=1.4.0 limitador-crate=0.6.0
+```
+You will see the following changes:
+
+ ```diff
+diff --git a/limitador/Cargo.toml b/limitador/Cargo.toml
+index 3aebf9d..d17b92b 100644
+--- a/limitador/Cargo.toml
++++ b/limitador/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "limitador"
+-version = "0.5.0-dev"
++version = "0.5.0"
+ ```
+ ```diff
+diff --git a/limitador-server/Cargo.toml b/limitador-server/Cargo.toml
+index dd2f311..011a2cd 100644
+--- a/limitador-server/Cargo.toml
++++ b/limitador-server/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "limitador-server"
+-version = "1.4.0-dev"
++version = "1.4.0"
+ ```
+
+3. Create a new tag with the new version following the semantic versioning vX.Y.Z.
+```sh
+git tag -a v1.4.0 -m "[tag] Limitador v1.4.0"
+git push origin v1.4.0
+```
+At this stage, the release workflow will be triggered and will do the before mentioned steps in the [Guide-level explanation](#guide-level-explanation).
+
+4. After the release workflow is done:
+   * approve the Github draft release and publish it.
+   * change the draft PR on OperatorHub to ready to review.
+
+5. Create a `next` branch off `main`
+6. Update the _both_ release files to point to the next `-dev` release
+7. Create PR
+8. Merge to `main`
+
+### Limitador Operator
+In order to prepare the release, the following steps need to be followed:
+
+1. Create a new branch with the selection of commits that need to be released.
+```sh
+git checkout -b release-0.8.0
+```
+
+2. Run the release script/makefile target.
+   This will communicate the user the parameters needed when ran without any, or it could prompt the user for them.
+   When successfully ends applying the changes, it will commit them to the release branch with message
+   "[release] Releasing Limitador Operator 0.8.0".
+
+```sh
+./release.sh limitador-operator=0.8.0 limitador=1.4.0 replaces=0.7.0
+```
+
+Between others, you will see the following changes:
+```diff
+diff --git a/bundle/manifests/limitador-operator.clusterserviceversion.yaml b/bundle/manifests/limitador-operator.clusterserviceversion.yaml
+index 3aebf9d..d17b92b 100644
+--- a/bundle/manifests/limitador-operator.clusterserviceversion.yaml
++++ b/bundle/manifests/limitador-operator.clusterserviceversion.yaml
+@@ -1,6 +1,6 @@
+ apiVersion: operators.coreos.com/v1alpha1
+ kind: ClusterServiceVersion
+-metadata:
+-  name: limitador-operator.v0.8.0-dev
++metadata:
++  name: limitador-operator.v0.8.0
+ spec:
+   apiservicedefinitions:
+     owned:
+@@ -9,7 +9,7 @@ spec:
+    customresourcedefinitions:
+      owned:
+      - description: Limitador is the main resource that describes a rate limiting policy.
+-       displayName: Limitador v0.8.0-dev
++       displayName: Limitador v0.8.0
+        kind: Limitador
+        name: limitadors.operator.kuadrant.io
+        version: v1alpha1
+@@ -17,7 +17,7 @@ spec:
+        - description: RateLimitPolicy is the resource that describes a rate limiting policy.
+            displayName: RateLimitPolicy
+            kind: RateLimitPolicy
+-           name: ratelimitpolicies.operator.kuadrant.io.v0.8.0-dev
++           name: ratelimitpolicies.operator.kuadrant.io.v0.8.0
+            version: v1alpha1
+          - description: AuthPolicy is the resource that describes an authentication policy.
+            displayName: AuthPolicy
+@@ -26,7 +26,7 @@ spec:
+replaces: limitador-operator.v0.7.0
+-  version: 0.8.0-dev
++  version: 0.8.0
+```
+
+3. Create a new tag with the new version following the semantic versioning vX.Y.Z.
+```sh
+git tag -a v0.8.0 -m "[tag] Limitador Operator v0.8.0"
+git push origin v0.8.0
+```
+
+At this stage, the release workflow will be triggered and will do the before mentioned steps in the [Guide-level explanation](#guide-level-explanation).
+
+4. After the release workflow is done:
+   * approve the Github draft release and publish it.
+   * change the draft PR on OperatorHub to ready to review.
+
+5. Create a `next` branch off `main`
+6. Update the _both_ release files to point to the next `-dev` release
+7. Create PR
+8. Merge to `main`
+
+### Notes
+* For any other specific version that is not meant for the actual release, the release script could be used with the following parameters:
+```sh
+./release.sh limitador-server=1.4.0-rc1 limitador-crate=0.6.0-rc1
+```
+or
+
+```sh
+./release.sh limitador-operator=0.8.0-qe-test limitador=1.4.0-qe-test replaces=0.7.0
+```
+
+* This option could be combined with the release file one, so the script could read the information from the file or prompt the user for it.
+
 
 # Drawbacks
 [drawbacks]: #drawbacks
