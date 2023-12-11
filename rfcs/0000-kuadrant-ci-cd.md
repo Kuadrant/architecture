@@ -732,6 +732,63 @@ or
 
 * This option could be combined with the release file one, so the script could read the information from the file or prompt the user for it.
 
+## Release Workflow
+The release workflow process, besides bringing the same benefits as the other ones, will also allow to trigger the
+entire process from a Github Action on demand, which it also could be seen as a complement to the other options.
+
+### Limitador
+In order to prepare the release, the following steps need to be followed:
+
+1. From the Actions tab, select the Release action. It will prompt the user the following parameters:
+   * Server version. I.e.: `1.4.0`
+   * Crate version. I.e.: `0.6.0`
+   * Release branch/commit/tag. I.e.: `release-1.4.0`
+   * Release tag. If not provided, it will be generated from the version. I.e.: `v1.4.0`
+
+2. Run the action.
+This will commit the changes to the release branch with message "[release] Releasing Limitador crate 0.6.0 and Server 1.4.0".
+It will verify the manifests, build the images and publish them to the container registry. It also will draft a release
+on Github with the information provided by the user.
+
+3. After the release workflow is done:
+   * approve the Github draft release and publish it.
+   * change the draft PR on OperatorHub to ready to review.
+
+The following steps can be automated by the release workflow, but they could be done manually as well:
+4. Create a `next` branch off `main`
+5. Update the _both_ release files to point to the next `-dev` release
+6. Create PR
+7. Merge to `main`
+
+### Limitador Operator
+In order to prepare the release, the following steps need to be followed:
+
+1. From the Actions tab, select the Release action. It will prompt the user the following parameters:
+   * Operator version. I.e.: `0.8.0`
+   * Limitador version. I.e.: `1.4.0`
+   * Replaces version. I.e.: `0.7.0`
+   * Release branch/commit/tag. I.e.: `release-0.8.0`
+   * Release tag. If not provided, it will be generated from the version. I.e.: `v0.8.0`
+
+2. Run the action.
+This will commit the changes to the release branch with message "[release] Releasing Limitador Operator 0.8.0".
+It will verify the manifests, build the images and publish them to the container registry. It also will draft a release
+on Github with the information provided by the user.
+
+3. After the release workflow is done:
+   * approve the Github draft release and publish it.
+   * change the draft PR on OperatorHub to ready to review.
+
+The following steps can be automated by the release workflow, but they could be done manually as well:
+4. Create a `next` branch off `main`
+5. Update the _both_ release files to point to the next `-dev` release
+6. Create PR
+7. Merge to `main`
+
+### Notes
+* For any other specific version that is not meant for the actual release, the release workflow could be executed with
+custom paramaters.
+* This option could be an enhancement to the previous ones, and work as a complement to them.
 
 # Drawbacks
 [drawbacks]: #drawbacks
