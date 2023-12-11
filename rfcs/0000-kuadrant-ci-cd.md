@@ -817,9 +817,10 @@ the approval of the OperatorHub PR, communication (blogpost, slack, etc).
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- What parts of the design do you expect to resolve through the RFC process before this gets merged?
-- What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
-- What related issues do you consider out of scope for this RFC that could be addressed in the future independently of the solution that comes out of this RFC?
+* How to handle the release of the website? Should it be part of the release process? In particular the docs part.
+* Communication of the release should be triggered automatically?
+* Should it be the 3 options combined? Maybe we could start with the release file and then add the release script and
+release workflow as enhancements. (?)
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
