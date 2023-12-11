@@ -331,7 +331,7 @@ information:
 
 This file should be updated every time a new release is made, and it should be committed to the repository to the release
 branch. This file will be used by the CI/CD tool to build and release the component. In the case of the main branch, the
-file will include the floating tag `latest` for its version and its dependencies.
+file will include the next version to be released, following the floating suffix `-dev` for its version and its dependencies.
 
 The CI/CD workflow will be triggered by a specific event (tag, commit, etc.) and will read the file and use the
 information to build and release the component. The workflow will be the same for all the components, and it will
@@ -407,14 +407,182 @@ Automatic steps on the CI/CD workflow:
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-This is the technical portion of the RFC. Explain the design in sufficient detail that:
+For the different options proposed, we'll be using [Limitador](https://github.com/Kuadrant/limitador) and the
+[Limitador Operator](https://github/com/Kuadrant/limitador-operator) as examples since the former is the most different
+from the rest of the components, and the latter is the most common one.
 
-- Its interaction with other features is clear.
-- It is reasonably clear how the feature would be implemented.
-- How error would be reported to the users.
-- Corner cases are dissected by example.
+## Release File
+For this option, will be using a YAML file named `release.yaml` that will be placed in the root of the repository.
 
-The section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
+### Limitador
+The file will contain the following information for Limitador component in the main branch pointing to the
+`[next-version]-dev`:
+
+```yaml
+server_version: 1.4.0-dev
+crate_version: 0.6.0-dev
+```
+
+In order to prepare the release, the following steps need to be followed:
+1. Create a new branch with the selection of commits that need to be released.
+```sh
+git checkout -b release-1.4.0
+```
+
+2. Update the release file with the new version/s.
+```yaml
+server_version: 1.4.0
+crate_version: 0.6.0
+```
+
+3. Execute the release script/makefile target.
+    TBD. This will use the information from the release file to update the Cargo.toml files and commit the changes to the
+    release branch with message "[release] Releasing Limitador crate 0.6.0 and Server 1.4.0".
+
+You will see the following changes:
+
+ ```diff
+diff --git a/limitador/Cargo.toml b/limitador/Cargo.toml
+index 3aebf9d..d17b92b 100644
+--- a/limitador/Cargo.toml
++++ b/limitador/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "limitador"
+-version = "0.5.0-dev"
++version = "0.5.0"
+ ```
+ ```diff
+diff --git a/limitador-server/Cargo.toml b/limitador-server/Cargo.toml
+index dd2f311..011a2cd 100644
+--- a/limitador-server/Cargo.toml
++++ b/limitador-server/Cargo.toml
+@@ -1,6 +1,6 @@
+ [package]
+ name = "limitador-server"
+-version = "1.4.0-dev"
++version = "1.4.0"
+ ```
+
+4. Create a new tag with the new version following the semantic versioning vX.Y.Z.
+```sh
+git tag -a v1.4.0 -m "[tag] Limitador v1.4.0"
+git push origin v1.4.0
+```
+
+At this stage, the release workflow will be triggered and will do the before mentioned steps in the [Guide-level explanation](#guide-level-explanation).
+
+5. After the release workflow is done:
+   * approve the Github draft release and publish it.
+   * change the draft PR on OperatorHub to ready to review.
+
+### Limitador Operator
+For the Limitador Operator, the release file will contain the following information in the main branch pointing to the
+`[next-version]-dev`:
+
+```yaml
+operator_version: 0.8.0-dev
+limitador_version: 1.4.0-dev
+replaces_version: 0.7.0
+```
+
+In order to prepare the release, the following steps need to be followed:
+1. Create a new branch with the selection of commits that need to be released.
+```sh
+git checkout -b release-0.8.0
+```
+
+2. Update the release file with the new version/s.
+```yaml
+operator_version: 0.8.0
+limitador_version: 1.4.0
+replaces_version: 0.7.0
+```
+
+3. Execute the release script/makefile target.
+   TBD. This will use the information from the release file to update the manifests and bundle files and commit the changes to the
+   release branch with message "[release] Releasing Limitador Operator 0.8.0".
+
+Between others, you will see the following changes:
+```diff
+diff --git a/bundle.Dockerfile b/bundle.Dockerfile
+index 3aebf9d..d17b92b 100644
+--- a/bundle.Dockerfile
++++ b/bundle.Dockerfile
+@@ -1,6 +1,6 @@
+ LABEL operators.operatorframework.io.bundle.channels.v1=alpha
+ LABEL operators.operatorframework.io.bundle.channels.v1=stable
+```
+```diff
+diff --git a/bundle/manifests/limitador-operator.clusterserviceversion.yaml b/bundle/manifests/limitador-operator.clusterserviceversion.yaml
+index 3aebf9d..d17b92b 100644
+--- a/bundle/manifests/limitador-operator.clusterserviceversion.yaml
++++ b/bundle/manifests/limitador-operator.clusterserviceversion.yaml
+@@ -1,6 +1,6 @@
+ apiVersion: operators.coreos.com/v1alpha1
+ kind: ClusterServiceVersion
+-metadata:
+-  name: limitador-operator.v0.8.0-dev
++metadata:
++  name: limitador-operator.v0.8.0
+ spec:
+   apiservicedefinitions:
+     owned:
+@@ -9,7 +9,7 @@ spec:
+    customresourcedefinitions:
+      owned:
+      - description: Limitador is the main resource that describes a rate limiting policy.
+-       displayName: Limitador v0.8.0-dev
++       displayName: Limitador v0.8.0
+        kind: Limitador
+        name: limitadors.operator.kuadrant.io
+        version: v1alpha1
+@@ -17,7 +17,7 @@ spec:
+        - description: RateLimitPolicy is the resource that describes a rate limiting policy.
+            displayName: RateLimitPolicy
+            kind: RateLimitPolicy
+-           name: ratelimitpolicies.operator.kuadrant.io.v0.8.0-dev
++           name: ratelimitpolicies.operator.kuadrant.io.v0.8.0
+            version: v1alpha1
+          - description: AuthPolicy is the resource that describes an authentication policy.
+            displayName: AuthPolicy
+@@ -26,7 +26,7 @@ spec:
+replaces: limitador-operator.v0.7.0
+-  version: 0.8.0-dev
++  version: 0.8.0
+```
+
+4. Create a new tag with the new version following the semantic versioning vX.Y.Z.
+```sh
+git tag -a v0.8.0 -m "[tag] Limitador Operator v0.8.0"
+git push origin v0.8.0
+```
+
+At this stage, the release workflow will be triggered and will do the before mentioned steps in the [Guide-level explanation](#guide-level-explanation).
+
+5. After the release workflow is done:
+   * approve the Github draft release and publish it.
+   * change the draft PR on OperatorHub to ready to review.
+
+6. Create a `next` branch off `main`
+7. Update the _both_ release files to point to the next `-dev` release
+8. Create PR
+9. Merge to `main`
+
+### Notes
+* For any other specific version that is not meant for the actual release, the release file could contain the following information:
+```yaml
+server_version: 1.4.0-rc1
+crate_version: 0.6.0-rc1
+```
+or
+
+```yaml
+operator_version: 0.8.0-qe-test
+limitador_version: 1.4.0-qe-test
+replaces_version: 0.7.0
+```
+
 
 # Drawbacks
 [drawbacks]: #drawbacks
