@@ -793,7 +793,10 @@ custom paramaters.
 # Drawbacks
 [drawbacks]: #drawbacks
 
-Why should we *not* do this?
+* It will require some effort to implement the new process.
+* There's still some other-than-code steps that need to be done manually, such as the approval of the Github draft release,
+the approval of the OperatorHub PR, communication (blogpost, slack, etc).
+* It will need a thorough verification and testing to ensure it works as expected.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
