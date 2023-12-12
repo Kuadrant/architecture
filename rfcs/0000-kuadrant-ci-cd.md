@@ -307,6 +307,8 @@ in a consistent way and without the need of any human setting variables or param
 
 Given our current process, we can identify some similarities and particularities between the different components:
 
+![](0000-kuadrant-cicd-release/kuadrant-components.png)
+
 * All of them are built using a CI/CD tool (GitHub Actions) and published to a container registry (quay.io).
 * Not all of them are built using the same build system (Cargo, Go, Operator SDK, etc.).
 * 3 of them follow the Operator Pattern and are built using the Operator SDK (Authorino, Limitador and Kuadrant operators).
@@ -813,6 +815,7 @@ the approval of the OperatorHub PR, communication (blogpost, slack, etc).
 * [Limitador release process](https://github.com/Kuadrant/limitador/blob/main/RELEASE.md)
 * [Limitador Operator](https://github.com/Kuadrant/limitador-operator/tree/main/.github/workflows) and
 [Kuadrant operator workfdlows](https://github.com/Kuadrant/kuadrant-operator/tree/main/.github/workflows)
+* [Current release process](#guide-level-explanation)
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
