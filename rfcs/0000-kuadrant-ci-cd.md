@@ -1,4 +1,4 @@
-# Kuadrant CI/CD release process
+# Kuadrant components CI/CD
 
 - Feature Name: `kuadrant-ci-cd`
 - Start Date: 2023-11-21
@@ -8,7 +8,7 @@
 # Summary
 [summary]: #summary
 
-This RFC not only proposes a new release process for Kuadrant components, but also a new and more agile way of getting
+This RFC focuses on how to build and deliver Kuadrant components, in a new and more agile way of getting
 the desired "artifacts" (images, manifests, etc.) into the hands of the users, devs, QE team and any other process that
 needs them.
 
@@ -154,7 +154,7 @@ e.g. `0.5.0`, if all is correct, this should push the release to [crates.io](htt
 ##### After the release
 
 1. Create a `next` branch off `main`
-2. Update the _both_ Cargo.toml to point to the next `-dev` release
+2. Update _both_ Cargo.toml files to point to the next `-dev` release
 3. Create PR
 4. Merge to `main`
 
@@ -451,8 +451,8 @@ index 3aebf9d..d17b92b 100644
 @@ -1,6 +1,6 @@
  [package]
  name = "limitador"
--version = "0.5.0-dev"
-+version = "0.5.0"
+-version = "0.6.0-dev"
++version = "0.6.0"
  ```
  ```diff
 diff --git a/limitador-server/Cargo.toml b/limitador-server/Cargo.toml
@@ -757,6 +757,7 @@ on Github with the information provided by the user.
    * change the draft PR on OperatorHub to ready to review.
 
 The following steps can be automated by the release workflow, but they could be done manually as well:
+
 4. Create a `next` branch off `main`
 5. Update the _both_ release files to point to the next `-dev` release
 6. Create PR
@@ -782,6 +783,7 @@ on Github with the information provided by the user.
    * change the draft PR on OperatorHub to ready to review.
 
 The following steps can be automated by the release workflow, but they could be done manually as well:
+
 4. Create a `next` branch off `main`
 5. Update the _both_ release files to point to the next `-dev` release
 6. Create PR
