@@ -229,8 +229,9 @@ that the service operates correctly and efficiently.
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-Think about what the natural extension and evolution of your proposal would be and how it would affect the platform and project as a whole. Try to use this section as a tool to further consider all possible interactions with the project and its components in your proposal. Also consider how this all fits into the roadmap for the project and of the relevant sub-team.
-
-This is also a good place to "dump ideas", if they are out of scope for the RFC you are writing but otherwise related.
-
-Note that having something written down in the future-possibilities section is not a reason to accept the current or a future RFC; such notes should be in the section on motivation or rationale in this or subsequent RFCs. The section merely provides additional information.
+- **Dynamic mode selection**: We could introduce a mechanism to dynamically switch between _Accuracy_ and _Throughput_
+  modes based on the current load and performance characteristics of the service.
+- **Fine-grained configuration**: We could provide more granular configuration options to allow users to fine-tune the
+  behaviour of the multi-threaded Limitador service based on their specific requirements.
+- **Performance optimizations**: We could explore various performance optimizations such as caching, pre-fetching, and
+  load balancing to further improve the throughput and efficiency of the multi-threaded Limitador service.
