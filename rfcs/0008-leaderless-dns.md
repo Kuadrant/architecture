@@ -2,7 +2,7 @@
 
 - Feature Name: Leaderless DNS Load Balancing
 - Start Date: 2024-01-17
-- RFC PR: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/pull/0000)
+- RFC PR: [Kuadrant/architecture#0008](https://github.com/Kuadrant/architecture/pull/55)
 - Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
 
 # Summary
