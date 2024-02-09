@@ -211,16 +211,11 @@ that the service operates correctly and efficiently.
 # Prior art
 [prior-art]: #prior-art
 
-Discuss prior art, both the good and the bad, in relation to this proposal.
-A few examples of what this can include are:
-
-- Does another project have a similar feature?
-- What can be learned from it? What's good? What's less optimal?
-- Papers: Are there any published papers or great posts that discuss this? If you have some relevant papers to refer to, this can serve as a more detailed theoretical background.
-
-This section is intended to encourage you as an author to think about the lessons from other tentatives - successful or not, provide readers of your RFC with a fuller picture.
-
-Note that while precedent set by other projects is some motivation, it does not on its own motivate an RFC.
+- [Limitador Issue #69](https://github.com/Kuadrant/limitador/issues/69) - This issue discusses "Sharable counters
+  across multiple threads" and provides some context and background on the need for multi-threading support in Limitador.
+- **Redis**: Redis is a popular in-memory data store that is often used to implement rate limiting and throttling
+  functionality. It provides atomic operations and data structures such as counters and sorted sets that can be used
+  to implement rate limiting with high throughput and accuracy.
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
