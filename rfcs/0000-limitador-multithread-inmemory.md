@@ -220,9 +220,11 @@ that the service operates correctly and efficiently.
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- What parts of the design do you expect to resolve through the RFC process before this gets merged?
-- What parts of the design do you expect to resolve through the implementation of this feature before stabilization?
-- What related issues do you consider out of scope for this RFC that could be addressed in the future independently of the solution that comes out of this RFC?
+- How to balance the need for strict adherence to defined limits with the desire to maximize throughput in the
+  multi-threaded implementation of Limitador?
+- What are the best concurrency control mechanisms and data structures to use for storing and updating counter data
+  across multiple threads?
+- What would be the algorithm to use to balance the _Accuracy_ and _Throughput_ modes?
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
