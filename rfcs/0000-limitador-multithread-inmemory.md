@@ -197,7 +197,9 @@ consistency in the counter data. We might not need to use locks, but we need to 
 # Drawbacks
 [drawbacks]: #drawbacks
 
-Why should we *not* do this?
+* The implementation of a multi-threaded Limitador service will introduce additional complexity to the codebase
+* The need to manage concurrency and consistency across threads will require careful design and testing to ensure
+that the service operates correctly and efficiently.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
