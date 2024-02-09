@@ -204,9 +204,9 @@ that the service operates correctly and efficiently.
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-- Why is this design the best in the space of possible designs?
-- What other designs have been considered and what is the rationale for not choosing them?
-- What is the impact of not doing this?
+- **Single-threaded**: We could choose to keep the current single-threaded implementation of Limitador, which would
+  maintain the simplicity and predictability of the service, but would limit its ability to handle concurrent requests
+  and process requests at a higher throughput.
 
 # Prior art
 [prior-art]: #prior-art
