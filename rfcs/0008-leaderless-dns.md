@@ -1,6 +1,6 @@
-# Leaderless DNS Load Balancing
+# Distributed DNS Load Balancing
 
-- Feature Name: Leaderless DNS Load Balancing
+- Feature Name: Distributed DNS Load Balancing
 - Start Date: 2024-01-17
 - RFC PR: [Kuadrant/architecture#0008](https://github.com/Kuadrant/architecture/pull/55)
 - Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
@@ -8,39 +8,39 @@
 # Summary
 [summary]: #summary
 
-Enable the MGC to manage DNS for one or more hostnames shared across one or more clusters, where a central "hub" cluster is not required or may not be available, and increase the robustness of the DNS Health checks by executing them from all the available clusters.
+Enable the DNS Operator to manage DNS for one or more hostnames shared across one or more clusters, where a central "hub" cluster is not required or may not be available, and increase the robustness of the DNS Health checks by executing them from all the available clusters.
 
 # Motivation
 [motivation]: #motivation
 
-Currently, the MGC has limited functionality for a single cluster, or for multiple clusters without OCM. Having the MGC enabled to manage DNS in these situations significantly eases onboarding users to the advantages of the MGC.
+Currently, the DNS record controller has limited functionality for a single cluster, and none for multiple clusters without OCM. Having the DNSRecord controller enabled to manage DNS in these situations significantly eases onboarding users to the advantages of the DNSRecord controller.
 
 # Diagrams
 [diagrams]: #diagrams
 
-- [Overview](./0008-leaderless-dns-assets/leaderless-dns-usecases.jpg)
-- [P2P Health Checks](./0008-leaderless-dns-assets/leaderless-dns-healthchecks.jpg)
-- [DNS Pruning](./0008-leaderless-dns-assets/leaderless-dns-pruning.jpg)
-- [DNS Controller](./0008-leaderless-dns-assets/leaderless-dns-dns-operator.jpg)
+- [Overview](./0008-distributed-dns-assets/distributed-dns-usecases.jpg)
+- [P2P Health Checks](./0008-distributed-dns-assets/distributed-dns-healthchecks.jpg)
+- [DNS Pruning](./0008-distributed-dns-assets/distributed-dns-pruning.jpg)
+- [DNS Controller](./0008-distributed-dns-assets/distributed-dns-dns-operator.jpg)
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
 ## Single Cluster
-In a single cluster scenario, create a DNS Policy that references a DNS provider. When a matching host on a gateway is found to be in use, the IP addresses of that gateway will be created as A records for that host in the Zone file following the configuration outlined in the DNS Policy.
+In a single cluster scenario, create a DNS Policy that references a DNS provider. When a listener host defined in the gateway is found that matches one of the available zones in the provider, the addresses of that gateway will be created as A or CNAME records for that host in the appropriate zone file following the configuration outlined in the DNS Policy.
 
 ### Single Cluster Health Checks
 If health checks are defined in the DNS Policy, these will also be created and used to remove unhealthy IPs from the Zone file, should all health checks fail, then all A records will be published to avoid an NXDOMAIN response.
 
 ## Multiple Cluster
-In a multiple cluster scenario, every cluster requires a DNS Policy configured with a provider secret that specifies a unique `clusterID`, they should all reference the same zone(s) in the same DNS Provider for the same host. In each cluster, when a matching host on a gateway is found to be in use, the IP addresses of that gateway will be appended to the zone file - in a non-destructive manner - allowing multiple clusters to all add their gateways IP addresses to the same zone file, without destroying each other's values.
+In a multiple cluster scenario, every cluster requires a DNS Policy configured with a provider secret that specifies a unique `multiClusterID`, they should all reference the same zone(s) in the same DNS Provider for the same host. In each cluster, when a matching listener host defined in the gateway is found that matches one of the available zones in the provider the addresses from that gateway will be appended to the zone file - in a non-destructive manner - allowing multiple clusters to all add their gateways addresses to the same zone file, without destroying each other's values.
 
 ### Multiple Cluster Health Checks
 If health checks are defined in the DNS Policy, these will be created on all clusters, there are then 2 types of health checks:
-1) Local Health Checks - used to check this clusters IP addresses are responding for the expected host.
+1) Local Health Checks - used to check the local gateway's IP addresses are responding for the expected host.
 2) Remote Health Checks - used to check that the other IP addresses in the zone file are responding for that zones host.
 
-When a local health check is failing, this IP will not be published to the zone.
+When a local health check is failing, this IP will not be published to the zone. If it has already been published it will be removed only if there is more than one available address
 
 When a remote health check is failing a TXT record is added/amended in the zone to note the failure - should the percentage of failing clusters exceed the `MultiClusterFailureThreshold` (configured in the DNS Policy), that unhealthy IP is removed from the zone by any cluster with an unhealthy check on that IP.
 
@@ -52,14 +52,14 @@ This is very similar to a single cluster, with the caveat that the "single" clus
 ### OCM / ACM Health Checks
 This is also the same as single cluster.
 
-## Migrating from Single cluster to Multiple cluster
+## Migrating from Single cluster to Multiple cluster without OCM
 
 In the single cluster: 
 - Edit all relevant provider secrets and set:
-  - `ClusterID` to some unique value
+  - `multiClusterID` to some unique value
 
 In the additional clusters:
-- Copy the DNS Policies and provider secrets from the single cluster to any additional clusters, and update the provider secrets with unique `ClusterID` values.
+- Copy the DNS Policies and provider secrets from the single cluster to any additional clusters, and update the provider secrets with unique `multiClusterID` values.
 - (optional) Create a gateway and workload which uses the same hosts as the single cluster.
 
 ## Migrating from single/multiple clusters to OCM
@@ -79,28 +79,28 @@ The DNS Records will have a finalizer from the DNS Operator which will clean the
 
 ## General Logic Overview
 
-The general flow for DNS Records follows a single path in the Kuadrant operator, where it will always output a DNS Record which specifies everything needed for this workload on this cluster, and is unaware of the concept of leaderless DNS, or phrased more simply:
-Build a DNS Record (kuadrantRecord) based on the local gateways and DNS Policy.
+The general flow for in the Kuadrant operator follows a single path, where it will always output a DNS Record which specifies everything needed for this workload on this cluster, and is unaware of the concept of distributed DNS, or phrased more simply:
+Build a DNS Record (let's refer to this as a kuadrantRecord) based on the local gateways and DNS Policy.
 
 This kuadrantRecord is reconciled by the DNS Operator, where there are 2 possible routes:
 
-Where a clusterID is specified in the relevant ProviderSecret the DNS Operator will act with the DNS Provider's zone as the authority and ensure that the records in the zone relevant to it's cluster are accurate, when cleaning up a DNS Record in this scenario the operator will ensure all records for the local cluster are removed and then prune unresolvable records from the DNS Provider zone.
+Where a multiClusterID is specified in the relevant ProviderSecret the DNS Operator will act with the DNS Provider's zone as the authority and ensure that the records in the zone relevant to the hosts defined within gateways on it's cluster are accurate. When cleaning up a DNS Record in this scenario the operator will ensure all records owned by the policy for the gateway on the local cluster are removed and then prune unresolvable records related to the hosts defined in the gateway from the DNS Provider zone.
 
-Where a clusterID is not specified the DNS Operator will act with the DNS Record as the authority and ensure the entire host is updated in the zone to exactly match the specified DNS Record when cleaning up in this scenario, the host is fully removed from the DNS Provider zone.
+Where a multiClusterID is not specified the DNS Operator will act with the DNS Record as the authority and ensure the entire host is updated in the zone to exactly match the specified DNS Record when cleaning up in this scenario, the host is fully removed from the DNS Provider zone.
 
 ### API Updates
 New configuration options in the providerSecret:
-- `ClusterID`
+- `multiClusterID`
   - When absent the DNS Operator will consider itself the owner of the zone and the local DNS Records as the authority.
   - When present the DNS Operator will consider the zone the authority and only insert/update any missing records from the local DNS Records.
-  - This can only be alphanumeric and have no whitespace, and is case-insensitive
-  - Used when generating an A record, e.g. `<hash>-<clusterID>.<lb-id>.<host...>`
+  - This value will be hashed whenever it is used in the zone file i.e. in the A/CNAME records and also in the health check TXT record)
+  - Used when generating an A record, e.g. `<hash>-<multiClusterID>.<lb-id>.<host...>`
 - `RefreshInterval`
   - When absent it defaults to the shortest TTL of created records. This is how often in seconds to reconcile the DNS Policy in order to pull fresh zone values from the DNS Provider.
 
 New fields added to the DNS Policy CRD: 
 - `HealthCheck.MultiClusterFailureThreshold`
-  - When absent defaults to `1`, what percentage of clusters need to be reporting an endpoint unhealthy on a remote IP for it to be removed from the zone by a cluster that does not own that IP.
+  - When absent defaults to `100`, what percentage of clusters need to be reporting an endpoint unhealthy on a remote IP for it to be removed from the zone by a cluster that does not own that IP.
 
 New fields added to the DNS Record CRD:
 - `HealthCheck`
@@ -108,7 +108,7 @@ New fields added to the DNS Record CRD:
 - `ProviderSecret`
   - Propagated from the DNS Policy to facilitate pulling the zone in the DNS controller.
 
-### Changes to DNS Policy reconciler
+### Changes to DNS Policy reconciler (kuadrant operator)
 
 This will primarily need to be made aware of the new fields on the DNS Policy (Healthcheck block and providerSecret field) that it will need to propagate into any DNS Records that it creates or updates. Otherwise the logic of this controller remains largely the same.
 
@@ -122,21 +122,25 @@ There are several changes required in this component:
 
 #### Build DNS Records from the provider zone
 
-When the DNS Operator reconciles a DNS Record (kuadrantRecord) it will first look to the referenced providerSecret to see if a ClusterID is set, if so the operator will first pull the most recent records from the DNS Provider and construct a separate DNS Record which accurately reflects the state of the zone in the provider (zoneRecord).
+When the DNS Operator reconciles a DNS Record (kuadrantRecord) it will first look to the referenced providerSecret to see if a multiClusterID is set, if so the operator will first pull the most recent records from the DNS Provider and construct a separate DNS Record which accurately reflects the state of the zone in the provider (zoneRecord).
 
 As this could result in many requests to the DNS Provider API a mechanism is required to reduce this to only request when required:
+
+#### Update GUID Logic
+
+Currently the DNS Operator builds the LB CNAME with a guid based on the name of the gateway, as this could potentially be different on different clusters, this will need to be updated to generate based on the zone's root hostname, to ensure it is consistently generated on all clusters that interact with this zone.
 
 #### Testing if a DNS Provider pull is Required
 
 When the DNS Operator publishes any changes to a zone, it will also add/update a (`kuadrant.last_modified_at`) TXT record with the current timestamp.
 
-If the DNS Operator has no local zoneRecords for a zone (in a providerSecret with a clusterID), it will list and build the zoneRecords.
+If the DNS Operator has no local zoneRecords for a zone (in a providerSecret with a multiClusterID), it will list and build the zoneRecords.
 
 If the DNS Operator already has zoneRecords it will first execute a GET request for the `kuadrant.last_modified_at` TXT record, if the value of that field is more recent than the zoneRecords lastModified time, then the DNS Operator will list and rebuild it's zoneRecords.
 
 #### Ensure local records are accurate
 
-Once the zoneRecord is created / updated on cluster, the operator will then scan through this DNS Record and remove any records that contain the local clusterID stored in the status of the DNS Record (more info on this later). Then inject the values from the kuadrantRecord into the zoneRecord. After this the DNS Operator will sanity check the result and prune any bad records (we will expand on that later). Once the zoneRecord is updated and sanity checked, if it has changed then the result is sent back to the DNS Provider so that the zone can be updated and made accurate (with an added update to the (`kuadrant.last_modified_at`) TXT record.
+Once the zoneRecord is created / updated on cluster, the operator will then scan through this DNS Record and remove any records that contain the local multiClusterID stored in the status of the DNS Record (more info on this later). Then inject the values from the kuadrantRecord into the zoneRecord. After this the DNS Operator will sanity check the result and prune any bad records (we will expand on that later). Once the zoneRecord is updated and sanity checked, if it has changed then the result is sent back to the DNS Provider so that the zone can be updated and made accurate (with an added update to the (`kuadrant.last_modified_at`) TXT record.
 
 #### Update response to failing health check 
 
@@ -148,7 +152,20 @@ In this scenario, the cluster will immediately remove the IP from the DNS Record
 
 ##### Remote Health Check Failing
 
-After ensuring its own clusterID is present in the relevant TXT record, the controller will count the totalClusters which is the sum of unique clusterIDs in that hosts A records. Then it will count the reportingClusters which is the number of clusterIDs in the relevant TXT record, if the reportingClusters/totalClusters >= HealthCheck.MultiClusterFailureThreshold then this IP will be removed for this host.
+After ensuring its own hashed multiClusterID is present in the relevant TXT record, the controller will count the totalClusters which is the sum of unique multiClusterIDs in that hosts A records. Then it will count the reportingClusters which is the number of multiClusterIDs in the relevant TXT record, if the reportingClusters/totalClusters >= HealthCheck.MultiClusterFailureThreshold then this IP will be removed for this host.
+
+example TXT record:
+```
+myapp.pb.apps.com/24.34.45.56: ghye7d34; lhoyg391
+```
+
+As this TXT record can be quite long (when many clusters are present), if this fields exceeds a DNS Record limit (255 characters), it will run into a second TXT record with the same key.
+
+Example TXT record:
+```
+myapp.pb.apps.com/24.34.45.56: ghye7d34; lhoyg391; ... <more cluster ids>
+myapp.pb.apps.com/24.34.45.56: hir01fcd; aoe8912;
+```
 
 ##### Handling no IPs published
 
@@ -174,9 +191,9 @@ Once the DNS Record has been reconciled, there is a possibility that dead branch
 
 An exception, as usual, is that if all records would be removed as the result of pruning then the DNS Record should be left unsaved, unless the DNS Record is trying to delete, in which case the records can be removed from the provider entirely.
 
-#### Handle Adding/Changing ClusterID
+#### Handle Adding/Changing multiClusterID
 
-When a DNS Record is created, the cluster ID from the provider secret is set in the status of the DNS Record. If a current value exists and is different, then the records from the zone that used the existing value in the status are removed, the records created with a new clusterID are set, and the value in the status is updated.
+When a DNS Record is created, the cluster ID from the provider secret is set in the status of the DNS Record. If a current value exists and is different, then the records from the zone that used the existing value in the status are removed, the records created with a new multiClusterID are set, and the value in the status is updated.
 
 # Drawbacks
 [drawbacks]: #drawbacks
