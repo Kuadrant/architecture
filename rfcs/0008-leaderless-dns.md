@@ -3,7 +3,7 @@
 - Feature Name: Distributed DNS Load Balancing
 - Start Date: 2024-01-17
 - RFC PR: [Kuadrant/architecture#0008](https://github.com/Kuadrant/architecture/pull/55)
-- Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
+- Issue tracking: [Kuadrant/architecture#0008](https://github.com/Kuadrant/architecture/issues/56)
 
 # Summary
 [summary]: #summary
@@ -148,7 +148,7 @@ When a health check fails, there are 2 scenarios that need to be considered:
 
 ##### Local Health Check Failing
 
-In this scenario, the cluster will immediately remove the IP from the DNS Record, as it is a local workload that is not functional.
+In this scenario, the cluster will immediately remove the IP from the DNS Record unless it is the only remaining IP, as it is a local workload that is not functional.
 
 ##### Remote Health Check Failing
 
