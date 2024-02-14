@@ -61,15 +61,9 @@ In this example, we are configuring the service to use the _InMemory_ storage an
 limitador-server --mode=throughput memory
 ```
 
-In a future iteration, we might be able to provide a richer interface that allows the user to configure the service
-in a balanced and/or more granular way.
+In this other example, we are configuring the service to use the _InMemory_ storage and to use the _Accuracy_ mode.
 ```bash
-limitador-server --mode=balanced --accuracy=0.1 --throughput=0.9 memory
-```
-
-or simply
-```bash
-limitador-server --accuracy=0.1 --throughput=0.9 memory
+limitador-server --mode=accuracy memory
 ```
 
 ## Implications
@@ -132,12 +126,12 @@ twice in a row, for example, when trying to revert the _overshoot_ from the prev
 Enhancing the Limitador service to process requests in parallel and being capable of operating in the previously described
 modes, entails considering various implications.
 
-Firstly, ensuring consistency in storing counter values across multiple threads is paramount to maintinging the integrity
+Firstly, ensuring consistency in storing counter values across multiple threads is paramount to maintaining the integrity
 of rate limiting operations. This involves implementing robust concurrency control mechanisms to prevent race conditions
 and data corruption when accessing and updating shared counter data.
 
 Additionally, choosing the data structure that will store the counter values must prioritize efficiency and thread safety
-to handle concurrect access effectively.
+to handle concurrent access effectively.
 
 Finally, considering that initially we will implement the setup of the mode at the service initialization time, balancing
 the need for strict adherence to defined limits with the desire to maximize throughput presents a trade-off that we could
@@ -180,17 +174,17 @@ described in the [Guide-level explanation](#guide-level-explanation) section.
 
 #### Accuracy mode
 
-* In Accuracy mode, we need to strictly adhere to the defined limits by denying requests that exeed the limits for each
+* In Accuracy mode, we need to strictly adhere to the defined limits by denying requests that exceed the limits for each
 Counter Object.
-* Check and update Counter values atomically to maintin consistency and prevent race conditions.
+* Check and update Counter values atomically to maintain consistency and prevent race conditions.
 * Enforce rate limits accurately by comparing the number of hits within the sliding window to the defined limit.
 
 #### Throughput mode
 
 * In Throughput mode, we need to prioritize maximizing the number of requests that can be processed concurrently over
 strict adherence to defined limits.
-* Allowing request to proceed even if they temproarly exceed the defined limits, favouring higher request rates.
-* We should use appropriate concurrency mechanisms and CAS oeprations to handle request efficiently while maintaining
+* Allowing request to proceed even if they temporarily exceed the defined limits, favouring higher request rates.
+* We should use appropriate concurrency mechanisms and CAS operations to handle requests efficiently while maintaining
 consistency in the counter data. We might not need to use locks, but we need to be careful with the CAS operations nonetheless.
 
 
@@ -232,6 +226,16 @@ that the service operates correctly and efficiently.
 - **Dynamic mode selection**: We could introduce a mechanism to dynamically switch between _Accuracy_ and _Throughput_
   modes based on the current load and performance characteristics of the service.
 - **Fine-grained configuration**: We could provide more granular configuration options to allow users to fine-tune the
-  behaviour of the multi-threaded Limitador service based on their specific requirements.
+  behaviour of the multi-threaded Limitador service based on their specific requirements. As shown below, we might be able
+  to provide a richer interface that allows the user to configure the service in a balanced and/or more granular way.
+  ```bash
+  limitador-server --mode=balanced --accuracy=0.1 --throughput=0.9 memory
+  ```
+
+  or simply
+  ```bash
+  limitador-server --accuracy=0.1 --throughput=0.9 memory
+  ```
+
 - **Performance optimizations**: We could explore various performance optimizations such as caching, pre-fetching, and
   load balancing to further improve the throughput and efficiency of the multi-threaded Limitador service.
