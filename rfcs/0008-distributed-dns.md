@@ -195,9 +195,9 @@ clean up in disaster scenario for multi-cluster:
 - more than `MultiClusterFailureThreshold` are nuked
 
 API usage limits on DNS providers:
-- [Google](https://cloud.google.com/service-usage/docs/quotas) - 240 read requests per minute
-- [Azure](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/request-limits-and-throttling) - 60 lists and 1000 gets per minute
-- [Route53](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/DNSLimitations.html) - 5 API requests per second
+- [Google](https://cloud.google.com/service-usage/docs/quotas) - 240 read requests per minute, 60 writes per minute
+- [Azure](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/request-limits-and-throttling) - 60 lists and 1000 gets per minute, 40 writes per minute
+- [Route53](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/DNSLimitations.html) - 5 API requests per second read or write
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
