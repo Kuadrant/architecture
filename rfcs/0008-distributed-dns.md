@@ -8,26 +8,26 @@
 # Summary
 [summary]: #summary
 
-Enable the DNS Operator to manage DNS for one or more hostnames shared across one or more clusters, where a central "hub" cluster is not required or may not be available, and increase the robustness of the DNS Health checks by executing them from all the available clusters.
+Enable the DNS Operator to manage DNS for one or more hostnames shared across one or more clusters.  Remove the requirement for a central "hub" cluster or multi-cluster control plane. Increase the robustness of the DNS Health checks by executing them from all the available clusters.
 
 # Motivation
 [motivation]: #motivation
 
-Currently, the DNS record controller has limited functionality for a single cluster, and none for multiple clusters without OCM. Having the DNSRecord controller enabled to manage DNS in these situations significantly eases onboarding users to the advantages of the DNSRecord controller.
+Currently, the DNS operator has limited functionality for a single cluster, and none for multiple clusters without OCM. Having the DNS operator enabled to manage DNS in these situations significantly eases onboarding users to leveraging DNSPolicy across both single and multi-cluster deployments.
 
 # Diagrams
 [diagrams]: #diagrams
 
 - ![Use Cases](0008-distributed-dns-assets%2Fdynamic-dns-use-cases.jpg)
 - ![P2P Health Checks](0008-distributed-dns-assets%2Fdynamic-dns-health-checks.jpg)
-- ![DNS Prunin](0008-distributed-dns-assets%2Fdynamic-dns-dns-pruning.jpg)
+- ![DNS Pruning](0008-distributed-dns-assets%2Fdynamic-dns-dns-pruning.jpg)
 - ![DNS Controller](0008-distributed-dns-assets%2Fdynamic-dns-dns-controller.jpg)
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
 ## Single Cluster and Multiple Cluster
-In a multiple cluster scenario, every cluster requires a DNS Policy configured with a provider secret, any that reference the same zone(s) in the same DNS Provider for the same host will behave as a distributed DNS. In each cluster, when a matching listener host defined in the gateway is found that matches one of the available zones in the provider the addresses from that gateway will be appended to the zone file - in a non-destructive manner - allowing multiple clusters to all add their gateways addresses to the same zone file, without destroying each other's values.
+In a multiple cluster scenario, every cluster requires a DNS Policy configured with a provider secret. If a provider secret reference the same zone(s) in the same backing DNS Provider for the same host, it will be treated as a distributed DNS target. In each cluster, when a matching listener host defined in the gateway is found that matches one of the available zones in the provider the addresses from that gateway will be appended to the zone file - in a non-destructive manner - allowing multiple clusters to all add their gateways addresses to the same zone file, without destroying each other's values.
 
 ### Health Checks
 If health checks are defined in the DNS Policy, these will be created on all clusters. When a health check is failing, a TXT record is added/amended in the zone to note the failure - should the percentage of failing clusters exceed the `MultiClusterFailureThreshold` (configured in the DNS Policy), that unhealthy IP is removed from the zone by any cluster with an unhealthy check on that IP.
@@ -55,23 +55,23 @@ The DNS Records will have a finalizer from the DNS Operator which will clean the
 ## Terminology
  - zone / DNS Provider zone: The set of records listed in the DNS Provider (the live list of DNS records)
  - KuadrantRecord: The DNSRecord created on the local cluster by Kuadrant - only contains the DNS requirements for the local cluster
- - ZoneRecord: The DNSRecord created on the local cluster by the DNS Operator, this sreflects the DNSRecord as it appears in the zone.
+ - ZoneRecord: The DNSRecord created on the local cluster by the DNS Operator, this reflects the DNSRecord as it appears in the zone.
 
 ## General Logic Overview
 
-The general flow for in the Kuadrant operator follows a single path, where it will always output a DNS Record which specifies everything needed for this workload on this cluster, and is unaware of the concept of distributed DNS, or phrased more simply:
+The general flow for in the Kuadrant operator follows a single path, where it will always output a DNS Record (kuadrantRecord) which specifies everything needed for this workload on this cluster, and is unaware of the concept of distributed DNS, or phrased more simply:
 Build a DNS Record based on the local gateways and DNS Policy.
 
-This kuadrantRecord is reconciled by the DNS Operator, the DNS Operator will act with the DNS Provider's zone as the authority and ensure that the records in the zone relevant to the hosts defined within gateways on it's cluster are accurate. When cleaning up a DNS Record the operator will ensure all records owned by the policy for the gateway on the local cluster are removed and then prune unresolvable records related to the hosts defined in the gateway from the DNS Provider zone.
+This kuadrantRecord is reconciled by the DNS Operator, the DNS Operator will act with the DNS Provider's zone as the authority and ensure that the records in the zone relevant to the hosts defined within gateways on it's cluster are accurate. When cleaning up a DNS Record the operator will ensure all records owned by the policy for the gateway on the local cluster are removed and then prune unresolvable records (an unresolvable record is a record that has no logical value such as an IP Address or a CNAME to a different root hostname) related to the hosts defined in the gateway from the DNS Provider zone.
 
 ### API Updates
-New configuration options in the providerSecret:
+New configuration options that can be applied as runtime arguments (to allow us emergency configuration rescue in case of an unexpected issue):
 - `RefreshInterval`
-  - When absent it defaults to the shortest TTL of created records. This is how often in seconds to reconcile the DNS Policy in order to pull fresh zone values from the DNS Provider.
-
-New fields added to the DNS Policy CRD: 
-- `HealthCheck.MultiClusterFailureThreshold`
-  - When absent defaults to `100`, what percentage of clusters need to be reporting an endpoint unhealthy on a remote IP for it to be removed from the zone by a cluster that does not own that IP.
+  - When absent it defaults to the shortest TTL of created records (and can be backed off in case of encountering API rate-limits). This is how often in seconds to reconcile the DNS Records in order to pull fresh zone values from the DNS Provider.
+- `MultiClusterFailureThreshold`
+  - When absent defaults to `66`, what percentage of clusters need to be reporting an endpoint unhealthy on a remote IP for it to be removed from the zone by a cluster that does not own that IP.
+- `clusterID`
+  - When absent is generated in code (more information below). A unique string to identify this cluster apart from all other clusters.
 
 New fields added to the DNS Record CRD:
 - `HealthCheck`
@@ -119,17 +119,21 @@ When the DNS Operator publishes any changes to a zone, it will also add/update a
 
 If the DNS Operator has no local zoneRecords for a zone, it will list and build the zoneRecords.
 
-If the DNS Operator already has zoneRecords (and their lastModified time is older than the refreshInterval, more on this later) it will first execute a GET request for the `kuadrant.last_modified_at` TXT record, if the value of that field is more recent than the zoneRecords lastModified time, then the DNS Operator will list and rebuild it's zoneRecords.
+If the DNS Operator already has zoneRecords (and their lastModified time is older than the refreshInterval, more on this later) it will first execute a GET request for the `kuadrant.last_modified_at` TXT record, if the value of that field is more recent than the zoneRecords lastModified time, then the DNS Operator will list and rebuild it's zoneRecords. The reason for this GET is some providers offer much higher limits on a GET of single record over a list of the zone (see the limits section).
 
-If the zoneRecords lastModified time is less old than the refreshInterval, a GET and possibly a LIST should only be executed when the spec of the kuadrantRecord has changed (as this will likely result in a write to the API).
+If the zoneRecords lastModified time is less than the next refresh time, an API request should only be executed when the spec of the kuadrantRecord has changed (as this will likely result in a write to the API).
 
 #### Ensure local records are accurate
 
 Once the zoneRecord is created / updated on cluster, the operator will then scan through this zoneRecord and remove any records for the local cluster. Then inject the values from the kuadrantRecord into the zoneRecord. After this the DNS Operator will sanity check the result and prune any bad records (we will expand on that later). Once the zoneRecord is updated and sanity checked, if it has changed then the result is sent back to the DNS Provider so that the zone can be updated and made accurate (with an added update to the `kuadrant.last_modified_at`) TXT record.
 
+#### Update to creation of health checks
+
+Currently, health checks are created for all published IPs in a DNS Record, this is fine and should continue, however we will also want to ensure we have health checks for all health check TXT records - it is possible that a host/ip combination is both an A/CNAME and a TXT record, in this case care needs to be taken to avoid creating duplicates of the same healthcheck.
+
 #### Update response to failing health check 
 
-After ensuring its own ClusterID is present in the relevant TXT record, the controller will count the totalClusters which is the sum of unique clusterIDs in that hosts DNS records. Then it will count the reportingClusters which is the number of clusterIDs in the relevant TXT record, if `reportingClusters/totalClusters >= HealthCheck.MultiClusterFailureThreshold` then this IP will be removed for this host.
+After ensuring its own ClusterID is present in the relevant TXT record, the controller will count the totalClusters which is the sum of unique clusterIDs in that hosts DNS records. Then it will count the reportingClusters which is the number of clusterIDs in the relevant TXT record, if `reportingClusters/totalClusters >= HealthCheck.MultiClusterFailureThreshold` and it is not the last IP for this host then this IP will be removed for this host.
 
 example healthcheck TXT record:
 ```
@@ -144,13 +148,14 @@ myapp.pb.apps.com/24.34.45.56: ghye7d34; lhoyg391; ... <more clusterIDs>
 myapp.pb.apps.com/24.34.45.56: hir01fcd; aoe8912;
 ```
 
+If a failing health check results in the IP being removed, the TXT record should be persisted to ensure the existence of the health check while the IP is absent.
+
 ##### Handling no IPs published
 
-If after processing the health checks the result is a DNS Record with no A records, then all of the A records will be persisted (this is to avoid an NXDOMAIN response).
+If after processing the health checks the result is a DNS Record with no A records, then all of the A records will be persisted (this is to avoid an NXDOMAIN response). These values will be retrieved from the TXT records created for the health checks.
 
 #### Regularly reconcile DNS Records
-
-As changes to the zone file can happen without triggering an event in the DNS Operator, the operator will need to poll the DNS Provider in order to ensure that it has an accurate set of records to ensure that changes in the zone are not missed. e.g. a cluster would not have health checks for any clusters that were added since it last read the zone.
+As changes to the zone file can happen without triggering an event in the DNS Operator, the operator will need to poll the DNS Provider in order to ensure that it has an accurate set of records. e.g. a cluster would not have health checks for any clusters that were added since it last read the zone.
 
 This interval is defined in the ProviderSecret `RefreshInterval` and defaults to the shortest TTL it is using in the DNS records. This is modifiable to handle a scenario where the DNS Provider is rate-limiting the requests due to being polled too frequently.
 
@@ -158,7 +163,7 @@ If an attempted reconcile receives a rate limited response from the API then it 
 
 examples:
 - An operator with a 60 second refresh interval sees a rate limit response, so requeues for a value between 57 and 63 seconds.
-- An operator with a 60 second refresh interval sees a rate limit response, so requeues for a value between 114 and 126 seconds.
+- An operator with a 120 second refresh interval sees a rate limit response, so requeues for a value between 114 and 126 seconds.
 
 #### Prune dead branches from DNS Records
 
@@ -166,7 +171,7 @@ What is a dead branch? If a CNAME exists whose value is a record that does not e
 
 Once the DNS Record has been reconciled, there is a possibility that dead branches might exist due to health checks or clusters being removed, in this case the controller will need to work through the DNS Record and ensure that from hostname to A records is structurally sound and that any dead branches are removed.
 
-An exception, as usual, is that if all records would be removed as the result of pruning then the DNS Record should be left unsaved, unless the DNS Record is trying to delete, in which case the records can be removed from the provider entirely.
+An exception, as usual, is that if all records would be removed as the result of pruning then the DNS Record should be constructed from the health check TXT records, and all unhealthy endpoints published, unless the DNS Record is trying to delete, in which case the records can be removed from the provider entirely.
 
 #### Cleanup
 
@@ -179,6 +184,12 @@ When merging the kuadrantRecord into the zoneRecord the DNS Operator will instea
 After removing all the local records, the DNS Operator will then perform a prune, and only in this scenario, if the zoneRecord is now empty these records are still deleted from the zone.
 
 Once completed, the DNS Operator deletes the zoneRecord that matches the deleting kuadrantRecord, and then removes the finalizer from the kuadrantRecord.
+
+#### Changing cluster IP/CNAME
+
+If a cluster's IP address changes, we will need to handle removing the old value from the relevant zone. This needs to be removed from the ZoneRecord:
+- The endpoints need to be removed
+- Any TXT records for that IP/Host need to be removed.
 
 #### Metrics
 
