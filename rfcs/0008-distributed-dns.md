@@ -59,7 +59,7 @@ The DNS Records will have a finalizer from the DNS Operator which will clean the
 
 ## General Logic Overview
 
-The general flow for in the Kuadrant operator follows a single path, where it will always output a DNS Record (kuadrantRecord) which specifies everything needed for this workload on this cluster, and is unaware of the concept of distributed DNS, or phrased more simply:
+The general flow in the Kuadrant operator follows a single path, where it will always output a local DNS Record (referred to as the kuadrantRecord) which specifies everything needed for this workload on this cluster, and is unaware of the concept of distributed DNS, or phrased more simply:
 Build a DNS Record based on the local gateways and DNS Policy.
 
 This kuadrantRecord is reconciled by the DNS Operator, the DNS Operator will act with the DNS Provider's zone as the authority and ensure that the records in the zone relevant to the hosts defined within gateways on it's cluster are accurate. When cleaning up a DNS Record the operator will ensure all records owned by the policy for the gateway on the local cluster are removed and then prune unresolvable records (an unresolvable record is a record that has no logical value such as an IP Address or a CNAME to a different root hostname) related to the hosts defined in the gateway from the DNS Provider zone.
