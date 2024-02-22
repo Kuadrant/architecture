@@ -62,7 +62,7 @@ This kuadrantRecord is reconciled by the DNS Operator, the DNS Operator will act
 
 ### Configuration Updates
 There will be a new configuration option that can be applied as runtime argument (to allow us emergency configuration rescue in case of an unexpected issue) to the kuadrant-operator:
-- `clusterID`
+- `clusterID`  (see below for how this is used)
   - When absent, this is generated in code (more information below). A unique string to identify this cluster apart from all other clusters.
 
 ### Changes to DNS Policy reconciler (kuadrant operator)
@@ -81,7 +81,7 @@ There are several changes required in this component:
 
 The cluster will need a deterministic manner to generate an ID that is unique enough to not clash with other clusterIDs, that can be regenerated if ever required.
 
-This clusterID is used to identify which A/CNAME records were created by the local cluster
+This clusterID is used as a prefix to identify which A/CNAME records were created by the local cluster
 
 The suggestion [here](https://groups.google.com/g/kubernetes-sig-architecture/c/mVGobfD4TpY/m/nkdbkX1iBwAJ) is to use the UID of the `kube-system` namespace, as this [cannot be deleted easily](https://groups.google.com/g/kubernetes-sig-architecture/c/mVGobfD4TpY/m/lR4SnaqpAAAJ) - so is practically speaking indelible.
 
@@ -101,11 +101,11 @@ Whenever the DNS Operator does a create or update on the zone (but not a delete)
 
 When a DNS Policy is marked for deletion the kuadrant operator will delete all relevant kuadrantRecords.
 
-Whenever a deleted kuadrantRecord is reconciled by the DNS Operator, it will remove any relevant records from the DNS Provider (i.e. any record with the clusterID in the name. and any target with the clusterID in the target) for the deleted kuadrantZone's root host.
+Whenever a deleted kuadrantRecord is reconciled by the DNS Operator, it will remove any relevant records from the DNS Provider (i.e. any record with the clusterID prefix in the name. and any target with the clusterID in the target) for the deleted kuadrantZone's root host.
 
 #### Prune dead branches from DNS Records
 
-If a KuadrantRecord is deleting, there is the potential that we are creating a dead branch, which will need to be recursively cleaned until none remain.
+If a KuadrantRecord is deleting, there is the potential that we are leaving behind a dead branch, which will need to be recursively cleaned until none remain.
 
 What is a dead branch? If a CNAME exists whose value is a record that does not exist, this CNAME will not resolve, as our DNS Records are structured similarly to a tree, this will be referenced as a "dead branch".
 
@@ -133,6 +133,8 @@ When a kuadrantRecord is being removed, the following must be successfully compl
 - Apply the results of the prune to the DNS Provider
 
 Only once these actions have all resolved should the finalizer be removed, and the kuadrantRecord allowed to be deleted.
+
+Should a deleted DNS Record be recreated, or a deleted DNS Policy be restored, all of the deleted records will be restored by the DNS Operator, at that point.
 
 #### Aggregating Status
 
