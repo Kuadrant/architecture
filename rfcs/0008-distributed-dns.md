@@ -95,6 +95,8 @@ Currently the DNS Operator builds the LB CNAME with a guid based on the name of 
 
 When the local KuadrantRecord is updated, the DNS Operator will ensure those values are present in the zone by interacting directly with the DNS Provider - however it will now only remove existing records if the name contains the local clusters clusterID, it will also remove CNAME values, if the value contains the local clusters clusterID.
 
+Whenever the DNS Operator does a create or update on the zone (but not a delete), it will requeue the KuadrantRecord for TTL / 2, to verify the results are present. This is identified when the observedGeneration and Generation are equal, we should list the zone and ensure all expected records are present. If they are absent, add them and requeue to verify again.
+
 #### Cleanup
 
 When a DNS Policy is marked for deletion the kuadrant operator will delete all relevant kuadrantRecords.
@@ -161,6 +163,8 @@ These 2 strategies are not compatible, and as such the RoutingStrategy field wil
 Some useful metrics have been determined:
 - Emit a metric whenever the DNS Operator writes to the zone.
 - Emit a metric whenever the kuadrant operator updates the kuadrantZone spec.
+- Emit a metric whenever the DNS Operator deletes an entry from the zone.
+- Emit a metric whenever the DNS Operator prunes a shared record from the zone.
 
 # Drawbacks
 [drawbacks]: #drawbacks
