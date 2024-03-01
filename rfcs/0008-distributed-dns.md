@@ -5,60 +5,146 @@
 - RFC PR: [Kuadrant/architecture#0008](https://github.com/Kuadrant/architecture/pull/55)
 - Issue tracking: [Kuadrant/architecture#0008](https://github.com/Kuadrant/architecture/issues/56)
 
+# Terminology
+
+- OCM: [Open Cluster Management](https://open-cluster-management.io/)
+- Dead End Records: Records that target a kuadrant defined CNAME that no longer exists
+
 # Summary
 [summary]: #summary
 
-Enable the DNS Operator to manage DNS for one or more hostnames shared across one or more clusters.  Remove the requirement for a central "hub" cluster or multi-cluster control plane.
+Enable the DNS Operator to manage DNS for one or more hostnames across one or more clusters.  Remove the requirement for a central OCM based "hub" cluster or multi-cluster control plane in order to enable multi-cluster DNS.
 
 # Motivation
 [motivation]: #motivation
 
-Currently, the DNS operator has limited functionality for a single cluster, and none for multiple clusters without OCM. Having the DNS operator enabled to manage DNS in these situations significantly eases onboarding users to leveraging DNSPolicy across both single and multi-cluster deployments.
+The DNS operator has limited functionality for a single cluster, and none for multiple clusters without leveraging OCM. Having the DNS operator capable of supporting the full feature set of DNSPolicy in these situations significantly eases on-boarding users to leveraging `DNSPolicy` across both single and multi-cluster deployments.
 
 # Diagrams
 [diagrams]: #diagrams
 
-- ![Distributed DNS](0008-distributed-dns-assets%2F0008-distributed-dns.jpg)
-- ![Load Balanced DNS Records](0008-distributed-dns-assets%2F0008-loadbalanced-dns-records.jpg)
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-## Single Cluster and Multiple Cluster
-Every cluster requires a DNS Policy configured with a provider secret. Every zone will be treated as a distributed DNS zone. In each cluster, when a matching listener host defined in the gateway is found that matches one of the available zones in the provider the addresses from that gateway will be appended to the zone file - in a non-destructive manner - allowing multiple clusters to all add their gateways addresses to the same zone file, without destroying each other's values.
+## Single Cluster and Multiple Clusters
+Every cluster requires a DNS Policy configured with a provider secret. Every zone will be treated as a distributed DNS zone. In each cluster, when a matching listener host defined in the gateway is found that belongs to one of the available zones in the provider, the DNS controller will add addresses from that gateway to the zone file based on the chosen strategy (simple | loadbalanced) in the DNSPolicy. Additionally the controller will be responsible for regularly validating what is in the zone ensuring its records are correctly reflected, that their are no dead end records and updating a local reflection of the zone records. Assuming no misconfiguration of DNSPolicy (more on this later), all of the controllers will be attempting to reach a **combined, complimentary and consolidated state** that reflects the full record set for a given DNS name. 
+But as each controller is responsible for part of the overall DNS record value set for a given DNS name in a shared zone and as neither the zone nor records are lockable, there can be scenarios where one controller overwrites some part of a zone/record with a stale view. This stale view however will eventually become consistent (see below). It is important to note that this design favours availability and partition tolerance (AP). Perfect data consistency at all times is not the goal but rather it is expected that the system can tolerate eventual consistency. 
 
-### Health Checks
-The health checks provided by the various DNS Providers will be used.
+### Why are we ok with a zone falling out of sync for a short period of time?
 
-## OCM / ACM
-This is very similar, with the caveat that the "cluster" is the hub cluster for this OCM and that the gateway will be a Kuadrant gatewayClass.
+DNS records for a given listener host cannot tolerate a constantly changing system and provide a good user experience. Rather it is intended that the record set remain relatively static. It is built into DNS to allow clients to cache results for long periods of time and so DNS itself is an eventually consistent system (write to the zone, secondary servers poll for changes, clients cache for TTL etc).  The source of truth in this design is stored across many clusters; the remote DNS Zone is not the ultimate source of truth for a given cluster (for DNS controllers) but rather a reflection of the truth held by many clusters. It is this slow rate of change and the fact the zone (from an individual controller's perspective) is not to be trusted that allows us to use a distributed approach. 
+As pointed out, the number of writes to the DNS zone should be few (although potentially bursty) and done by relatively few clients. Constant individual and broad changes to any DNS system are likely to result in a poor experience as clients will be out of sync and potentially send traffic to endpoints that are no longer present (example changing the address of the gateway once every 30 seconds). 
+What about weight and GEO routing? Clusters do not change GEO often. Once set up, GEO should not be something that constantly changes. Weighting is also something that should not change constantly. Rather it will be set and left in most cases. There is no use case for a constantly changing DNS Zone.
+
+### How can a zone fall out of sync?
+
+The scenarios outlined below describe how the record set for a given DNS name in a zone can temporarily fall out of sync. While they exist and will happen, it is reasonable to assume that these scenarios are relatively uncommon in a stable environment due to the low rate of change and defensive pattern for varying the time between validation loops (more below). Also if they were to occur in a stable environment, they should only occur if a big change is happening across the entire fleet or, more likely, effect a small subset of the fleet such as clusters being added or decommissioned or the geo/weighting being tweaked / set on a subset of the fleet. Finally every scenario needs multiple clusters to be attempting to update the DNS zone at exactly the same time.  
+
+Below are the known triggers for an actual change to records in the DNSZone. If two or more clusters attempt one of these changes at the same time a potential conflict can occur:
+
+- New Gateway added to the fleet with a (new DNSPolicy added) with an existing shared listener host.
+
+If two or more clusters are attempting to add / update addresses at the same time, it is possible that for a short period the last cluster to write will have a stale view and overwrite a value from another cluster. Example (A record with multiple values).es There will always be a valid value set, but it may not be the full set of addresses for a short period. 
+
+- Gateway being decommissioned from the fleet or clusters being decommissioned (DNSPolicy being deleted)
+
+Again if multiple clusters where being removed / added and the controllers attempted to update the same record at the same time, they may overwrite each others values for a short period of time.
+
+- Geo or Weighting being changed 
+
+As adding GEO or Weighting attributes can change the record set, if you were to change these on several clusters and some of those clusters attempted to update the record set at the same time, there may be some inconsistency for a short period.
+
+
+### How do we resolve a conflict
+
+(note this may change subtly and be optimized in implementation but the fundamental principles apply)
+
+Each gateway listener has its own record set reflected on cluster as a DNSRecord that the DNS controller understands and will add into the specified zone (also reflected on cluster in the status of the DNSRecord). When the controller needs to perform a write to the zone, it first pulls the existing zone, writes this to the status and then merges its own DNS record spec with what is in the zone. It then updates the remote zone with this new reflection and writes the resulting record set to the status of the DNS record. It then immediately re-queues the record to validate against the zone 3 (example) seconds later. When the validation loop executes, it will check the zone still contains the changes it expects to be there (IE its records) and update the status to reflect the status of the validation check. If this check is successful, it will update its status and then enter a quiet phase where it re-queues itself for 15 (example) minutes later to re-validate (this allows for an unexpected overwrite). If a new change is made to the local DNS record, it starts the write process again. If the validation is not successful (records are not present), the controller will assume there is a conflict and update the zone again and enter a re-try state for that DNS record where the validation interval is (example 5 seconds) plus or minus a random jitter amount of time within a set range (example 1-5 seconds). This jitter reduces the chances of a reoccurring clash with the same controller in the future.
+In a worst case scenario, this should lead to a linear amount of time (re-try * num clashing controller) before the system becomes consistent where which ever cluster is the last to write will be the first to see a valid state..  
+
+example status but will likely change in implementation:
+
+```
+{
+  Type: UnresolvedConflictDiscovered
+  Status: True
+  Reason: RecordsMissing|ConflictingStrategyDiscovered
+  Message: "current atttempt is y in z minutes"
+}
+```
+
+Each DNS change results in a minimum of 3 requests to the cloud provider 2 lists (1 before the write and one post the write) and 1 update within the re-try interval (IE 5 seconds + a max 5 second random judder) so total request is (3 request per ~5-10 seconds * the number of conflicting controllers). E.G. if you had a situation where ten clusters were clashing this would mean worst case 30 requests with the first 5-10 seconds and falling off linearly (IE 27 within the next 5-10 seconds 24 and so on until the correct state was converged on). Note with the random judder, it is likely that this would fall off at a faster rate I am describing absolute worst case for reaching a converged state.
+
+
+### How do we spot misconfiguration
+
+Misconfiguration is focused around the DNSPolicy (as this is our API). However other forms of misconfig may also be spotted with the proposed method to spot unresolvable conflicts:
+
+Misconfiguration of a DNSPolicy for a shared listener host, is something that would mean the DNS zone could not end up in a consolidated state. Rather it is a long term conflict. Examples of this would be if you had one cluster with a DNSPolicy whose strategy was set to LoadBalanced and second cluster with a DNSPolicy that had a strategy of simple (assuming this DNSPolicy was targeting a listener with the same hostname).
+
+In situations like this, all of the DNS operators would reach the error state outlined above where they were unable to validate their changes were present and the re-tries would continue indefinitely (this would be visible in the status as shown above).
+
 
 ## Migrating from single/multiple clusters to OCM
 
 This is not covered.
 
+## Migrating from single to multiple cluster (distributed)
+
+The steps for this are quite straight forward:
+This assumes you already have 1 cluster with a gateway and DNSPolicy setup.
+- Create a new gateway that has a listener defined with a hostname you want to use across clusters
+- Create a DNSPolicy that uses the same strategy as the DNSPolicy already configured
+- Ensure you create and link to the same DNS Provider (credential) as your first cluster
+
 ## Cleanup
 
-Cleanup of a cluster's zone file entries is triggered by deleting the DNS Policy that caused the kuadrantRecords to be created.
+Cleanup of a cluster's zone file entries is triggered by deleting the DNS Policy that caused the records to be created.
 
-The DNS policy will have a finalizer, when it is deleted the controller will mark the created kuadrantRecords for deletion.
+The DNS policy will have a finalizer, when it is deleted the kuadrant operator will mark the created DNS record for deletion.
 
-The kuadrantRecords will have a finalizer from the DNS Operator which will clean the records from the zone before removing the finalizer.
+The DNS record will have a finalizer from the DNS Operator which will clean the records from the zone before removing the finalizer.
+
+## Switching strategy
+The DNSPolicy offers 2 strategies 
+1) Simple (one A record multiple values)
+2) LoadBalanced (leverages CNAMES and A records to provide advanced DNS based routing to be used (example GEO or Weighted) )
+
+The strategy field will be immutable once set. To migrate from one strategy to the other you must first delete the existing policy and recreate it with a new strategy. In a multi-cluster environment, this can mean you have a period of time where 2 different strategies are set (simple on one and load balanced on another). The controller will mitigate against this in the following way:
+When attempting to update the remote zone, it first does a read. If it spots existing records in that zone that correlate with a different strategy, it will not write its own records but will flag this as an error state in the status. So the records will remain in the original strategy until all policies for that listener match. This is true also if you delete all policies 
+
+
+## Orphan Mitigation
+
+It is possible for an orphan set of records to be created. This is not something we currently mitigate against directly in the controller. However, you can define health checks tht would remove these orphans from the DNS response. Additionally, there is future work that leverages a "heart beat" that should allow each alive controller to see and remove a dead controllers records.
+
+### Health Checks
+The health checks provided by the various DNS Providers will be used. However we may choose to cover this area in more detail in a subsequent RFC
+[AWS](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/DNS-failover.html)
+[Google DNS](https://cloud.google.com/DNS/docs/zones/manage-routing-policies#before_you_begin)
+[Azure](https://learn.microsoft.com/en-us/azure/traffic-manager/traffic-manager-monitoring)
+
+## OCM / ACM
+This is very similar, with the caveat that the "cluster" is the hub cluster for this OCM and that the gateway will be a Kuadrant gatewayClass. You can think about this setup as "single cluster" with a gateway that has multiple addresses. 
+
+
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
 ## Terminology
- - zone / DNS Provider zone: The set of records listed in the DNS Provider (the live list of DNS records)
+ - Dead End: a record managed the DNS Operator that points another value managed by the DNS Operator that no longer exists. 
+ zone / DNS Provider zone: The set of records listed in the DNS Provider (the live list of DNS records)
  - KuadrantRecord: The DNSRecord created on the local cluster by Kuadrant - only contains the DNS requirements for the local cluster
  - ZoneRecord: The DNSRecord created on the local cluster by the DNS Operator, this reflects the DNSRecord as it appears in the zone.
  - Root Host: The listener on a gateway that caused the Kuadrant Operator to create a KuadrantRecord (i.e the host that the users will be interacting with)
 
 ## General Logic Overview
 
-The general flow in the Kuadrant operator follows a single path, where it will always output a kuadrantRecord, which specifies everything needed for this workload on this cluster, and is unaware of the concept of distributed DNS.
+The general flow in the Kuadrant operator follows a single path, where it will always output a DNSRecord, which specifies everything needed for the listener host of a given gateway on the cluster, and is unaware of the concept of distributed DNS.
 
-This kuadrantRecord is reconciled by the DNS Operator, the DNS Operator will act with the DNS Provider's zone and ensure that the records in the zone relevant to the hosts defined within gateways on it's cluster are present. When cleaning up a DNS Record the operator will ensure all records owned by the policy for the gateway on the local cluster are removed, then the DNS Operator will also prune unresolvable records (an unresolvable record is a record that has no logical value such as an IP Address or a CNAME to a different root hostname) related to the hosts defined in the kuadrantRecords.
+This DNSRecord is reconciled by the DNS Operator. In the event of a change to the endpoints in the DNSRecord resource the DNS Operator will first pull down the relevant records for that DNS name from the provider and store them in the DNSRecord status, then it will update its own endpoints in that record set and validate the record set has no "dead ends" before writing the changes back to the DNS Provider's zone. Once the remote write is successful, it will then re-queue itself to do a validation. The validation will be the same validation as previously done before the write. It will ensure that the endpoints it owns are present or removed in case of deletion. If the validation is successful, the controller will mark this in the status and will re-queue validation for ~30 minutes later. If validation is unsuccessful, it will re-queue the DNSRecord for validation rapidly (3 seconds for example). With each re-queue after an unsuccessful validation, it will add a random "jitter" to increase the chance it moves out of sync with other actors. Each time it re-queues, it will mark this in the status. If it reaches the maximum back-off (to be defined), it will mark this as an error in the status but continue to validate at the maximum back-off. At any point, if there is a change to the on-cluster DNSRecord, this back off and validation will be reset and started again.  
 
 ### Configuration Updates
 There will be a new configuration option that can be applied as runtime argument (to allow us emergency configuration rescue in case of an unexpected issue) to the kuadrant-operator:
@@ -69,11 +155,11 @@ There will be a new configuration option that can be applied as runtime argument
 
 This will primarily need to be made aware that it will need to propagate the DNS Policy health check block into any DNS Records that it creates or updates using the provider specific fields.
 
-It will also need to update the format of the records in the KuadrantRecord, to make use of the new GUID and clusterID when formatting the record names and targets.
+It will also need to update the format of the records in the DNSRecord it creates, to make use of the new GUID and clusterID when formatting the record names and targets.
 
 ### DNS Operator
 
-This component takes the kuadrantRecords output by the kuadrant-operator and ensure they are accurately reflected in the DNS Provider zone and currently assumes the DNS Record is the source of truth and always ensures that the zone in the DNS Provider matches the local DNS Record CR.
+This component takes the DNSRecord output by the kuadrant-operator and ensure they are accurately reflected in the DNS Provider zone and currently assumes the DNS Record is the source of truth and always ensures that the zone in the DNS Provider matches the local DNS Record CR.
 
 There are several changes required in this component:
 
@@ -93,9 +179,11 @@ Currently the DNS Operator builds the LB CNAME with a guid based on the name of 
 
 #### Ensure local records are accurate
 
-When the local KuadrantRecord is updated, the DNS Operator will ensure those values are present in the zone by interacting directly with the DNS Provider - however it will now only remove existing records if the name contains the local clusters clusterID, it will also remove CNAME values, if the value contains the local clusters clusterID.
+When the local DNSRecord is updated, the DNS Operator will ensure those values are present in the zone by interacting directly with the DNS Provider - however it will now only remove existing records if the name contains the local clusters clusterID, it will also remove CNAME values, if the value contains the local clusters clusterID. The DNS Operator will store the record set for a given DNS name in the status of that DNSRecord.
 
-Whenever the DNS Operator does a create or update on the zone (but not a delete), it will requeue the KuadrantRecord for TTL / 2, to verify the results are present. This is identified when the observedGeneration and Generation are equal, we should list the zone and ensure all expected records are present. If they are absent, add them and requeue to verify again.
+Whenever the DNS Operator does a write (see above) it will re-queue the DNSRecord to verify the results are present. This verification only reconcile is identified when the observedGeneration and Generation are equal, if validation fails a back-off will be used plus jitter (additional random time). 
+
+If the spec of the DNSRecord is changed locally, this will reset the validation.
 
 #### Cleanup
 
@@ -103,7 +191,7 @@ When a DNS Policy is marked for deletion the kuadrant operator will delete all r
 
 Whenever a deleted kuadrantRecord is reconciled by the DNS Operator, it will remove any relevant records from the DNS Provider (i.e. any record with the clusterID prefix in the name. and any target with the clusterID in the target) for the deleted kuadrantZone's root host.
 
-#### Prune dead branches from DNS Records
+#### Prune dead ends from DNS Records
 
 If a KuadrantRecord is deleting, there is the potential that we are leaving behind a dead branch, which will need to be recursively cleaned until none remain.
 
@@ -154,11 +242,21 @@ The simple strategy is also compatible with ExternalDNS which makes it useful in
 ##### Loadbalanced
 This strategy outputs a DNS record tree with various levels of CNAMEs to allow for geo loadbalancing as well as loadbalancing within a geo and is compatible with multiple clusters.
 
-This can be seen here: ![Load Balanced DNS Records](0008-distributed-dns-assets%2F0008-loadbalanced-dns-records.jpg)
+This can be seen here: ![Load Balanced DNS Records](0008-distributed-DNS-assets%2F0008-loadbalanced-DNS-records.jpg)
 
 ##### Migration
 
 These 2 strategies are not compatible, and as such the RoutingStrategy field will be set to immutable, requiring the deletion and recreation of the DNS Policy in order to update this value. This will result in the related records being removed from the zone before being created in the new format.
+
+#### Rate Limiting
+
+TODO how we handle the response (requeue with back off)
+
+API usage limits on DNS providers:
+- [Google](https://cloud.google.com/service-usage/docs/quotas) - 240 read requests per minute, 60 writes per minute
+- [Azure](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/request-limits-and-throttling) - 60 lists and 1000 gets per minute, 40 writes per minute
+- [Route53](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/DNSLimitations.html) - 5 API requests per second read or write
+- No health checks for private clusters
 
 #### Metrics
 
@@ -173,12 +271,6 @@ Some useful metrics have been determined:
 
 clean up in disaster scenario for multi-cluster:
 - any cluster nuked without time to cleanup will never be cleaned from the zone.
-
-API usage limits on DNS providers:
-- [Google](https://cloud.google.com/service-usage/docs/quotas) - 240 read requests per minute, 60 writes per minute
-- [Azure](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/request-limits-and-throttling) - 60 lists and 1000 gets per minute, 40 writes per minute
-- [Route53](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/DNSLimitations.html) - 5 API requests per second read or write
-- No health checks for private clusters
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
