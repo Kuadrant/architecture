@@ -134,18 +134,11 @@ This is very similar, with the caveat that the "cluster" is the hub cluster for 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-## Terminology
- - Dead End: a record managed the DNS Operator that points another value managed by the DNS Operator that no longer exists. 
- zone / DNS Provider zone: The set of records listed in the DNS Provider (the live list of DNS records)
- - KuadrantRecord: The DNSRecord created on the local cluster by Kuadrant - only contains the DNS requirements for the local cluster
- - ZoneRecord: The DNSRecord created on the local cluster by the DNS Operator, this reflects the DNSRecord as it appears in the zone.
- - Root Host: The listener on a gateway that caused the Kuadrant Operator to create a KuadrantRecord (i.e the host that the users will be interacting with)
-
 ## General Logic Overview
 
 The general flow in the Kuadrant operator follows a single path, where it will always output a DNSRecord, which specifies everything needed for the listener host of a given gateway on the cluster, and is unaware of the concept of distributed DNS.
 
-This DNSRecord is reconciled by the DNS Operator. In the event of a change to the endpoints in the DNSRecord resource the DNS Operator will first pull down the relevant records for that DNS name from the provider and store them in the DNSRecord status, then it will update its own endpoints in that record set and validate the record set has no "dead ends" before writing the changes back to the DNS Provider's zone. Once the remote write is successful, it will then re-queue itself to do a validation. The validation will be the same validation as previously done before the write. It will ensure that the endpoints it owns are present or removed in case of deletion. If the validation is successful, the controller will mark this in the status and will re-queue validation for ~30 minutes later. If validation is unsuccessful, it will re-queue the DNSRecord for validation rapidly (3 seconds for example). With each re-queue after an unsuccessful validation, it will add a random "jitter" to increase the chance it moves out of sync with other actors. Each time it re-queues, it will mark this in the status. If it reaches the maximum back-off (to be defined), it will mark this as an error in the status but continue to validate at the maximum back-off. At any point, if there is a change to the on-cluster DNSRecord, this back off and validation will be reset and started again.  
+This DNSRecord is reconciled by the DNS Operator. In the event of a change to the endpoints in the DNSRecord resource the DNS Operator will first pull down the relevant records for that DNS name from the provider and store them in the DNSRecord status, then it will update its own endpoints in that record set and validate the record set has no "dead ends" before writing the changes back to the DNS Provider's zone. Once the remote write is successful, it will then re-queue itself to do a validation. The validation will be the same validation as previously done before the write. It will ensure that the endpoints it owns are present or removed in case of deletion. If the validation is successful, the controller will mark this in the status and will re-queue validation for ~15 minutes later (example). If validation is unsuccessful, it will re-queue the DNSRecord for validation rapidly (5 seconds for example). With each re-queue after an unsuccessful validation, it will add a random "jitter" to increase the chance it moves out of sync with other actors. Each time it re-queues, it will mark this in the status (see above). At any point, if there is a change to the on-cluster DNSRecord, this back off and validation will be reset and started again.  
 
 ### Configuration Updates
 There will be a new configuration option that can be applied as runtime argument (to allow us emergency configuration rescue in case of an unexpected issue) to the kuadrant-operator:
@@ -190,36 +183,25 @@ If the spec of the DNSRecord is changed locally, this will reset the validation.
 
 When a DNS Policy is marked for deletion the kuadrant operator will delete all relevant kuadrantRecords.
 
-Whenever a deleted kuadrantRecord is reconciled by the DNS Operator, it will remove any relevant records from the DNS Provider (i.e. any record with the clusterID prefix in the name. and any target with the clusterID in the target) for the deleted kuadrantZone's root host.
+Whenever a deleted kuadrantRecord is reconciled by the DNS Operator, it will remove any relevant records from the DNS Provider (i.e. any record with the clusterID prefix in the name. and any target with the clusterID in the target) for the deleted host.
 
 #### Prune dead ends from DNS Records
 
-If a KuadrantRecord is deleting, there is the potential that we are leaving behind a dead branch, which will need to be recursively cleaned until none remain.
+If a DNSRecord is deleting, there is the potential that we are leaving behind a dead end, which will need to be recursively cleaned until none remain.
 
-What is a dead branch? If a CNAME exists whose value is a record that does not exist, this CNAME will not resolve, as our DNS Records are structured similarly to a tree, this will be referenced as a "dead branch".
+What is a dead end? If a CNAME exists whose value is a record that does not exist, this CNAME will not resolve.
 
-The controller will need to work through the DNS Record and ensure that from hostname to A (or external CNAME) records is structurally sound and that any dead branches are removed, to do this, the DNS Operator will need to first read what is published in the provider zone:
+The controller will need to work through the DNS Record and ensure that from hostname to A (or external CNAME) records is structurally sound and that any dead ends are removed, to do this, the DNS Operator will need to first read what is published in the provider zone.
 
-#### Build ZoneRecord from the provider zone
+#### Removing the finalizer from DNSRecord
 
-When the DNS Operator has finished reconciling a deleting kuadrantRecord it will pull the most recent records from the DNS Provider and construct a separate zoneRecord for the same root host as the deleting kuadrantRecord.
+When a DNSRecord is reconciled, the DNS Operator should apply a finalizer to it.
 
-#### Prune the zoneRecord
-
-It will recursively analyse the zoneRecord and ensure that it is structurally sound and that all records can be resolved to at least one external CNAME or A record.
-
-If during this pruning period the zoneRecord is modified, then these modifications will need to be sent to the DNS Provider to clean the zone.
-
-Once completed, the zoneRecord can be deleted (this may be possible to only reflect in memory completely).
-
-#### Removing the finalizer from kuadrantRecords
-
-When a kuadrantRecord is reconciled, the DNS Operator should apply a finalizer to it.
-
-When a kuadrantRecord is being removed, the following must be successfully completed before the finalizer can be removed:
+When a DNSRecord is being removed, the following must be successfully completed before the finalizer can be removed:
 - Remove the local clusters records and targets from the relevant zone
 - Perform a prune on the relevant root host
 - Apply the results of the prune to the DNS Provider
+- re-queue for validation
 
 Only once these actions have all resolved should the finalizer be removed, and the kuadrantRecord allowed to be deleted.
 
@@ -229,7 +211,7 @@ Should a deleted DNS Record be recreated, or a deleted DNS Policy be restored, a
 
 When the DNS Operator performs actions based on the state of a kuadrantRecord, it should update the kuadrantRecord status with results of these actions, similar to how it is currently implemented.
 
-When the Kuadrant operator sees these statuses on the kuadrantRecords related to a DNS Policy, it should aggregate them into a consolidated status on the DNS Policy status.
+When the Kuadrant operator sees these statuses on the DNSRecord related to a DNS Policy, it should aggregate them into a consolidated status on the DNS Policy status.
 
 It will be possible from this DNS Policy status to determine that all the records for this cluster, related to this DNS Policy, have been accepted by the DNS Provider.
 
@@ -245,9 +227,6 @@ This strategy outputs a DNS record tree with various levels of CNAMEs to allow f
 
 This can be seen here: ![Load Balanced DNS Records](0008-distributed-DNS-assets%2F0008-loadbalanced-DNS-records.jpg)
 
-##### Migration
-
-These 2 strategies are not compatible, and as such the RoutingStrategy field will be set to immutable, requiring the deletion and recreation of the DNS Policy in order to update this value. This will result in the related records being removed from the zone before being created in the new format.
 
 #### Rate Limiting
 
