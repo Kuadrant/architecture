@@ -274,6 +274,10 @@ No prior art.
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
+## Strategy Check
+
+It would be possible to have the controller write the strategy to txt record for the root host. `a.b.com:strategy:simple` . We could then implement a pre-write check. If this txt record was set to a conflicting strategy, other controllers would not write their changes but instead would report this in their status. It would be up the end user then to decide to either change the conflicting policies or delete the simple policy and allow a load balanced policy to take over. 
+
 ## Heartbeat Check
 
 It may turn out that disappearing clusters create more headaches than currently anticipated, and in this scenario we could respond with having each cluster regularly update a heartbeat TXT field (say every 5 minutes), and on this timer also check all other clusters heart beats, if some are falling old then all the records related to that heartbeat's clusterID can be removed.
