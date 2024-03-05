@@ -8,7 +8,7 @@
 # Terminology
 
 - OCM: [Open Cluster Management](https://open-cluster-management.io/)
-- Dead End Records: Records that target a kuadrant defined CNAME that no longer exists
+- Dead End Records: Records that target a Kuadrant defined CNAME that no longer exists
 
 # Summary
 [summary]: #summary
@@ -28,7 +28,7 @@ The DNS operator has limited functionality for a single cluster, and none for mu
 [guide-level-explanation]: #guide-level-explanation
 
 ## Single Cluster and Multiple Clusters
-Every cluster requires a DNSPolicy configured with a provider secret. In each cluster, when a matching listener host defined in the gateway is found that belongs to one of the available zones in the DNS provider, the DNS controller will add addresses from that gateway to the zone based on the chosen DNSPolicy strategy (simple | loadbalanced). Each DNS controller will be responsible for regularly validating what is in the zone to ensure its own records are correctly reflected, that their are no dead end records and updating a local reflection of the zone as part of the DNSPolicy status. So the comnination of each of the controllers records will brind the zone records  to a **cohesive and consolidated state** that reflects the full record set for a given DNS name. 
+Every cluster requires a gateway and DNSPolicy configured with a provider secret. In each cluster, when a matching listener host defined in the gateway is found that belongs to one of the available zones in the DNS provider, the Kuadrant Operator, based on the chosen DNSPolicy strategy (simple | loadbalanced), will reflect the gateway address into a DNSRecord and the DNSRecord controller (part of the DNS Operator) will reconcile endpoints from that DNSRecord into the zone. The DNS controller will be responsible for regularly validating what is in the zone, reflecting that zone into the DNSRecord status, ensuring its own records are correctly reflected and that their are no dead end records present. So the combination of each of the controllers records within or across clusters will bring the zone records  to a **cohesive and consolidated state** that reflects the full record set for a given DNS name. 
 
 
 ## Migrating from distributed to centeralised (OCM Hub)
