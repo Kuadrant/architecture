@@ -57,7 +57,7 @@ The strategy field will be immutable once set. To migrate from one strategy to t
 
 ## Orphan Mitigation
 
-It is possible for an orphan set of records to be created if for example a cluster is removed and the controller on that cluster is not given time to clean up. This is not something we currently mitigate against directly in the controller. However, you can define health checks tht would remove these orphans from the DNS response. Additionally, there is future work that leverages a "heart beat" that should allow each alive controller to see and remove a dead controllers records within a given criteria.
+It is possible for an orphan set of records to be created if for example a cluster is removed and the controller on that cluster is not given time to clean up. This is not something we currently mitigate against directly in the controller. However, you can define health checks that would remove these orphans from the DNS response. Additionally, there is future work that leverages a "heart beat" that should allow each alive controller to see and remove a dead controllers records within a given criteria.
 
 ### Health Checks
 The health checks provided by the various DNS Providers will be used AWS will be the only one implemented initially as part of this RFC as we have done it before. For the others we may choose to cover this area in more detail in a subsequent RFC and they may be limited to having infra within that provider.
