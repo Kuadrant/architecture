@@ -92,7 +92,7 @@ As each controller is responsible for part of the overall DNS record set for a g
 
 ### Why are we ok with a zone falling out of sync for a short period of time?
 
-As mentioned each of the controllers is, other than in error scenarios (covered later), attempting to bring the zone into a converged and consistent state and so while some stale state can be written, the controllers will not fight (IE go endlessly back and forth) over what should actually be in the zone. Each controller is only interested in its own records and removing dead ends. 
+As mentioned each of the controllers is, other than in error scenarios (such as misconfiguration, covered later), attempting to bring the zone into a converged and consistent state and so while some stale state can be written, the controllers will not fight (IE go endlessly back and forth) over what should actually be in the zone. Each controller is only interested in its own records and removing dead ends. 
 As mentioned, the zone is not lockable, stale data can be written. But over a "relatively short time" the zone should come into a consistent shape. As a general rule, DNS records (managed by Kuadrant or not) for a given listener host cannot tolerate a constantly changing system and provide a good user experience. Rather it is intended that the record set remain relatively static. It is built into DNS to allow clients to cache results for long periods of time and so DNS itself is an eventually consistent system (write to the zone, secondary servers poll for changes, clients cache for TTL etc).  Additionally the temporary impact of a clash should be localized to only the values being changed by the subset of clusters.
 As pointed out, the number of writes to the DNS zone should be few (although potentially "bursty") and done by relatively few concurrent clients. Constant individual and broad changes to any DNS system are likely to result in a poor experience as clients (browsers etc) will be out of sync and potentially send traffic to endpoints that are no longer present (example changing the address of the gateway once every 30 seconds). 
 What about weight and GEO routing? Clusters do not change GEO often. Once set up, GEO should not be something that constantly changes. Weighting is also something that should not change constantly. Rather it will be set and left in most cases. There is no use case for a constantly changing DNS Zone. 
@@ -168,7 +168,7 @@ When the local DNSRecord is updated, the DNS Operator will ensure those values a
 
 When a DNS Policy is marked for deletion the kuadrant operator will delete all relevant DNSRecords.
 
-Whenever a deleted kuadrantRecord is reconciled by the DNS Operator, it will remove any relevant records from the DNS Provider (i.e. any record identified by the clusterID for the deleted host.
+Whenever a deleted DNSRecord is reconciled by the DNS Operator, it will remove any relevant records from the DNS Provider (i.e. any record identified by the clusterID for the deleted host.
 
 #### Prune dead ends from DNS Records
 
@@ -188,17 +188,17 @@ When a DNSRecord is being removed, the following must be successfully completed 
 - Apply the results of the prune to the DNS Provider
 - re-queue for validation
 
-Only once these actions have all resolved should the finalizer be removed, and the kuadrantRecord allowed to be deleted.
+Only once these actions have all resolved should the finalizer be removed, and the DNSRecord allowed to be deleted.
 
 Should a deleted DNS Record be recreated, or a deleted DNS Policy be restored, all of the deleted records will be restored by the DNS Operator, at that point.
 
 #### Aggregating Status
 
-When the DNS Operator performs actions based on the state of a kuadrantRecord, it should update the kuadrantRecord status with results of these actions, similar to how it is currently implemented.
+When the DNS Operator performs actions based on the state of a DNSRecord, it should update the DNSRecord status with results of these actions, similar to how it is currently implemented.
 
 When the Kuadrant operator sees these statuses on the DNSRecord related to a DNS Policy, it should aggregate them into a consolidated status on the DNS Policy status.
 
-It will be possible from this DNS Policy status to determine that all the records for this cluster, related to this DNS Policy, have been accepted by the DNS Provider.
+It will be possible from this DNS Policy status to determine that all the records for this cluster, related to this DNS Policy, have been accepted by the DNS Provider. This will likely fall under the `Accepted` and `Enforced` statuses.
 
 
 #### Cloud Provider Rate Limiting
