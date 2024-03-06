@@ -164,7 +164,7 @@ When the local DNSRecord is updated, the DNS Operator will ensure those values a
 
 #### Cleanup
 
-When a DNS Policy is marked for deletion the kuadrant operator will delete all relevant kuadrantRecords.
+When a DNS Policy is marked for deletion the kuadrant operator will delete all relevant DNSRecords.
 
 Whenever a deleted kuadrantRecord is reconciled by the DNS Operator, it will remove any relevant records from the DNS Provider (i.e. any record identified by the clusterID for the deleted host.
 
