@@ -140,7 +140,7 @@ There will be a new configuration option that can be applied as runtime argument
 
 This will primarily need to be made aware that it will need to propagate the DNS Policy health check block into any DNS Records that it creates or updates using the provider specific fields.
 
-It will also need to update the format of the records in the DNSRecord it creates, to make use of the new GUID when formatting the record names and targets.
+It will also need to update the format of the records in the DNSRecord it creates. We will drop the use of a guid from the DNS name and instead simple use a prefix (klb) for example. This will mean multiple gateways with the same or different names can now update the record set if their gateway shares a listener with a common host name. 
 
 ### DNS Operator
 
@@ -152,7 +152,7 @@ There are several changes required in this component:
 
 The cluster will need a deterministic manner to generate an ID that is unique enough to not clash with other clusterIDs, that can be regenerated if ever required.
 
-This clusterID is used to identify which A/CNAME records were created by which cluster/controller
+This clusterID is used to identify which A/CNAME records were created by which cluster/controller. This is done via the registry implementation in external-dns. Initially we will use the TXT registry, but in the future we will also want to offer a different form of storage for the registry .
 
 The suggestion [here](https://groups.google.com/g/kubernetes-sig-architecture/c/mVGobfD4TpY/m/nkdbkX1iBwAJ) is to use the UID of the `kube-system` namespace, as this [cannot be deleted easily](https://groups.google.com/g/kubernetes-sig-architecture/c/mVGobfD4TpY/m/lR4SnaqpAAAJ) - so is practically speaking indelible.
 
@@ -261,3 +261,8 @@ To further improve the simple demo of the MGC product, making the clusters work 
 ## Accurate scaling predictions.
 
 Currently we don't have a strong grip on how far we can scale, but are confident we can scale to a small number of clusters initially (3-5). Beyond this number it may be worth looking at the ACM/OCM integration until we have more accurate information.
+
+## Additional registry implementations
+
+Adding different forms of storage based on the registry API 
+
