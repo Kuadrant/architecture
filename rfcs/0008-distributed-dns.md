@@ -24,6 +24,10 @@ The DNS operator has limited functionality for a single cluster, and none for mu
 [diagrams]: #diagrams
 
 
+- ![Load Balanced DNS Records](0008-distributed-dns-assets/dns-record.jpg)
+- ![Controller Flow](0008-distributed-dns-assets/distributed-dns-flow.png)
+
+
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
