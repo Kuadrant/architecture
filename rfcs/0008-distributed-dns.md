@@ -148,21 +148,21 @@ This will primarily need to be made aware that it will need to propagate the DNS
 
 It will also need to update the format of the records in the DNSRecord it creates. We will drop the use of a guid from the DNS name and instead simple use a prefix (klb) for example. This will mean multiple gateways with the same or different names can now update the record set if their gateway shares a listener with a common host name. 
 
-### DNS Operator
-
-This component takes the DNSRecord output by the kuadrant-operator and ensure they are accurately reflected in the DNS Provider zone and currently assumes the DNS Record is the source of truth and always ensures that the zone in the DNS Provider matches the local DNS Record CR.
-
-There are several changes required in this component:
-
 #### Generate a ClusterID
 
-The cluster will need a deterministic manner to generate an ID that is unique enough to not clash with other clusterIDs, that can be regenerated if ever required.
+The cluster will need a deterministic manner to generate an ID that is unique enough to not clash with other clusterIDs, that can be regenerated if ever required. This id will be used in the cluster specific endpoints. This id will also be used by the DNS Operator to set the txt registry entries.
 
 This clusterID is used to identify which A/CNAME records were created by which cluster/controller. This is done via the registry implementation in external-dns. Initially we will use the TXT registry, but in the future we will also want to offer a different form of storage for the registry .
 
 The suggestion [here](https://groups.google.com/g/kubernetes-sig-architecture/c/mVGobfD4TpY/m/nkdbkX1iBwAJ) is to use the UID of the `kube-system` namespace, as this [cannot be deleted easily](https://groups.google.com/g/kubernetes-sig-architecture/c/mVGobfD4TpY/m/lR4SnaqpAAAJ) - so is practically speaking indelible.
 
-We can take the UID of that namespace and apply a hashing algorithm to result in 6-7 character code which can be used as the clusterID for the local cluster.
+We can take the UID of that namespace and apply a hashing algorithm to result in 6-7 character code which can be used as the clusterID for the local cluster. This will be applied 
+
+### DNS Operator
+
+This component takes the DNSRecord output by the kuadrant-operator and ensure they are accurately reflected in the DNS Provider zone and currently assumes the DNS Record is the source of truth and always ensures that the zone in the DNS Provider matches the local DNS Record CR.
+
+There are several changes required in this component:
 
 #### Ensure local records are accurate
 
