@@ -195,6 +195,7 @@ When a DNSRecord is being removed, the following must be successfully completed 
 - Remove the local clusters records and targets from the relevant zone
 - Perform a prune on the relevant root host
 - Apply the results of the prune to the DNS Provider
+- Remove any endpoint health checks
 - re-queue for validation
 
 Only once these actions have all resolved should the finalizer be removed, and the DNSRecord allowed to be deleted.
