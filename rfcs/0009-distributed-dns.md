@@ -2,8 +2,8 @@
 
 - Feature Name: Distributed DNS Load Balancing
 - Start Date: 2024-01-17
-- RFC PR: [Kuadrant/architecture#0008](https://github.com/Kuadrant/architecture/pull/55)
-- Issue tracking: [Kuadrant/architecture#0008](https://github.com/Kuadrant/architecture/issues/56)
+- RFC PR: [Kuadrant/architecture#0009](https://github.com/Kuadrant/architecture/pull/55)
+- Issue tracking: [Kuadrant/architecture#0009](https://github.com/Kuadrant/architecture/issues/56)
 
 # Terminology
 
@@ -24,8 +24,8 @@ The DNS operator has limited functionality for a single cluster, and none for mu
 [diagrams]: #diagrams
 
 
-- ![Load Balanced DNS Records](0008-distributed-dns-assets/dns-record-structure-loadbalanced.jpg)
-- ![Controller Flow](0008-distributed-dns-assets/distributed-dns-flow.png)
+- ![Load Balanced DNS Records](0009-distributed-dns-assets/dns-record-structure-loadbalanced.jpg)
+- ![Controller Flow](0009-distributed-dns-assets/distributed-dns-flow.png)
 
 
 # Guide-level explanation
