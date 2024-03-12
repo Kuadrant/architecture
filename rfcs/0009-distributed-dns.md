@@ -70,6 +70,11 @@ The health checks provided by the various DNS Providers will be used AWS will be
 [Google DNS](https://cloud.google.com/DNS/docs/zones/manage-routing-policies#before_you_begin)
 [Azure](https://learn.microsoft.com/en-us/azure/traffic-manager/traffic-manager-monitoring)
 
+
+#### Removal of health checks
+
+This will remain the same. Health checks are tied to the cluster endpoint (IE the IPAddress or external CNAME that is unique to that cluster/gateway). When a DNSPolicy is removed these cluster specific endpoints will also be removed and any health checks attached to them.
+
 ## OCM / ACM
 This is very similar, with the caveat that the "cluster" is the hub cluster for this OCM and that the gateway will be a Kuadrant gatewayClass. You can think about this setup as "single cluster" with a gateway that has multiple addresses. It will continue to work with these changes. 
 
