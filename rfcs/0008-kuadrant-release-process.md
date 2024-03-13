@@ -43,7 +43,7 @@ connectivity and global load balancing.
 - [DNS Operator](https://github.com/Kuadrant/dns-operator): A Kubernetes Operator to manage DNS in single and multi-cluster
 environments.
 - [Kuadrant Operator](https://github.com/Kuadrant/kuadrant-operator/): The Operator to install and manage the lifecycle
-  of the Kuadrant components deployments.
+  of the Kuadrant components deployments. Example alerts and dashboards are also included as optional.
 - [kuadrantctl](https://github.com/Kuadrant/kuadrantctl): A CLI tool for managing Kuadrant configurations and resources.
 
 Each of them needs to be versioned independently, and the versioning scheme should follow [Semantic Versioning](https://semver.org/).
@@ -154,6 +154,7 @@ component. The following table shows the different registries used by each compo
 |                                 | kuadrant-operator-bundle images                | [Quay.io](https://quay.io/repository/kuadrant/kuadrant-operator-bundle)                |
 |                                 | kuadrant-operator-catalog images               | [Quay.io](https://quay.io/repository/kuadrant/kuadrant-operator-catalog)               |
 |                                 | kuadrant-operator manifests                    | [OperatorHub.io](https://operatorhub.io/operator/kuadrant-operator)                    |
+|                                 | kuadrant-operator source (includes example dashboards and alerts)| [Github Releases](https://github.com/Kuadrant/kuadrant-operator/releases)                    |
 | kuadrantctl                     | kuadrantctl CLI                                | [Github Releases](https://github.com/Kuadrant/kuadrantctl/releases)                    |
 
 ## Documentation
