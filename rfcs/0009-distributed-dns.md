@@ -99,6 +99,17 @@ As each controller is responsible for part of the overall DNS record set for a g
 
 * It is worth noting that in some providers, they force a deletion of the record before writing a new value. Google DNS for example. This means in order to write a new value you must have the exact record you are going to update the value for. With this model, the controller would receive an error if its local records were out of date and so would help prevent any stale data being written.
 
+#### Multi Cluster Plan
+
+In order to be able to leverage the external-dns plan concept, we will make changes to ensure it will operate in a multi-cluster environment: 
+Our current set of rules are as follows. These should not be considered the only rules, they the ones we can see at this point. There may be some unknowns that become clear as we implement.
+
+- Cannot change record type for an existing record. We will validate that an endpoint type as set in the zone is not being changed from an A to CNAME for example.
+- Cannot update a record when no owner TXT record exists. This is to ensure we don't modify records that the controller didn't create.
+- Can only delete a record when current owner is the only owner. This is to avoid removing a record that is still "alive" for other controllers.
+- Must append targets and preserve existing targets when a matching record exists. This is to allow for multi value records. An A record with multiple values for example. So each controller will only add or remove its own values for a shared record.
+- Must be able to identify and update old invalid values for the current owner. This is to address a situation where a address changes on cluster and an old value needs to be updated.
+
 ### Why are we ok with a zone falling out of sync for a short period of time?
 
 As mentioned each of the controllers is, other than in error scenarios (such as misconfiguration, covered later), attempting to bring the zone into a converged and consistent state and so while some stale state can be written, the controllers will not fight (IE go endlessly back and forth) over what should actually be in the zone. Each controller is only interested in its own records and removing dead ends. 
