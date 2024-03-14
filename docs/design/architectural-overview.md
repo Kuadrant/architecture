@@ -21,7 +21,7 @@ Currently in order for all APIs to work in a single or multi-cluster context you
 
 ## 1000m Architecture
 
-![](./images/1000m-overview.png)
+![](./images/highest-level.jpg)
 
 
 
