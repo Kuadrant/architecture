@@ -76,7 +76,7 @@ These two subsets of attributes are unified into a single set of well-known attr
 The next sections specify the well-known attributes organized in the following groups:
 - [Request attributes](#request-attributes)
 - [Connection attributes](#connection-attributes)
-- [Metadata and filter state attributes](#metadata-and-filter-state-attributes)
+- [Metadata attribute](#metadata-and-filter-state-attributes)
 - [Auth attributes](#auth-attributes)
 - [Rate-limit attributes](#rate-limit-attributes)
 
@@ -396,9 +396,9 @@ The following attributes are available once the downstream connection with the A
   </tbody>
 </table>
 
-## Metadata and filter state attributes
+## Metadata attribute
 
-The following attributes are related to the Envoy proxy filter chain. They include metadata exported by the proxy throughout the filters and information about the states of the filters themselves.
+The following attribute is related to the Envoy proxy filter chain. They include metadata exported by the proxy throughout the filters.
 
 <table>
   <thead>
@@ -416,13 +416,6 @@ The following attributes are related to the Envoy proxy filter chain. They inclu
       <td><p><a href="https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/core/v3/base.proto#envoy-v3-api-msg-config-core-v3-metadata">Metadata</a></p></td>
       <td><p>Dynamic request metadata</p></td>
       <td align="center"><p>✓</p></td>
-      <td align="center"><p>✓</p></td>
-    </tr>
-    <tr>
-      <td><p>filter_state</p></td>
-      <td><p>Map&lt;String, String&gt;</p></td>
-      <td><p>Mapping from a filter state name to its serialized string value</p></td>
-      <td align="center"><p></p></td>
       <td align="center"><p>✓</p></td>
     </tr>
   </tbody>
