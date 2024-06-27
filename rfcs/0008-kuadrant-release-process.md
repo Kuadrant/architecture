@@ -204,6 +204,7 @@ it's been changing over time. However, there are some documentation for some of 
 * [Authorino release process](https://github.com/Kuadrant/authorino/blob/main/RELEASE.md)
 * [Authorino Operator release process](https://github.com/Kuadrant/authorino-operator/blob/main/RELEASE.md)
 * [Limitador release process](https://github.com/Kuadrant/limitador/blob/main/RELEASE.md)
+* [DNS Operator release process](https://github.com/Kuadrant/dns-operator/blob/main/docs/RELEASE.md)
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
