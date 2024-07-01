@@ -55,7 +55,7 @@ Each secret discovered will result in a separate DNSRecord for any targeted list
 
 When a secret is deleted there will be no action taken by the DNS Controller. When a secret is updated the controller will trigger a reconcile of the policy. 
 
-If the DNS controller fails to access a provider or fails to create the records due to the zone being absent for example, this failure will be reflected in the DNSRecord and piped back to the DNSPolicy status (below). 
+If the DNS controller fails to access a provider or fails to create the records due to the secret or specified zone being absent for example, this failure will be reflected in the DNSRecord and piped back to the DNSPolicy status (below). 
 
 ## DNSPolicy Status updates
 
