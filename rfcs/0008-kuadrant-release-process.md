@@ -38,7 +38,6 @@ The set of components that are part of the _Kuadrant suite_ are the following:
 - [Limitador](https://github.com/Kuadrant/limitador): A generic rate-limiter written in Rust.
 - [Limitador Operator](https://github.com/Kuadrant/limitador-operator/): A Kubernetes Operator to manage Limitador deployments.
 - [Wasm Shim](https://github.com/Kuadrant/wasm-shim/): A Proxy-Wasm module written in Rust, acting as a shim between Envoy and Limitador.
-- [Multicluster Gateway Controller](https://github.com/Kuadrant/multicluster-gateway-controller): Provides multi-cluster
 connectivity and global load balancing.
 - [DNS Operator](https://github.com/Kuadrant/dns-operator): A Kubernetes Operator to manage DNS in single and multi-cluster
 environments.
@@ -144,9 +143,6 @@ component. The following table shows the different registries used by each compo
 |                                 | limitador-operator-catalog images              | [Quay.io](https://quay.io/repository/kuadrant/limitador-operator-catalog)              |
 |                                 | limitador-operator manifests                   | [OperatorHub.io](https://operatorhub.io/operator/limitador-operator)                   |
 | Wasm Shim                       | wasm-shim images                               | [Quay.io](https://quay.io/repository/kuadrant/wasm-shim)                               |
-| Multicluster Gateway Controller | multicluster-gateway-controller images         | [Quay.io](https://quay.io/repository/kuadrant/multicluster-gateway-controller)         |
-|                                 | multicluster-gateway-controller-bundle images  | [Quay.io](https://quay.io/repository/kuadrant/multicluster-gateway-controller-bundle)  |
-|                                 | multicluster-gateway-controller-catalog images | [Quay.io](https://quay.io/repository/kuadrant/multicluster-gateway-controller-catalog) |
 | DNS Operator                    | dns-operator images                            | [Quay.io](https://quay.io/repository/kuadrant/dns-operator)                            |
 |                                 | dns-operator-bundle images                     | [Quay.io](https://quay.io/repository/kuadrant/dns-operator-bundle)                     |
 |                                 | dns-operator-catalog images                    | [Quay.io](https://quay.io/repository/kuadrant/dns-operator-catalog)                    |
