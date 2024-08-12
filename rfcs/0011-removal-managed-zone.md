@@ -20,7 +20,7 @@ The key user impact here is to avoid users having to create additional none poli
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-There will no longer be a `ManagedZone` resource that needs to be created as a pre-requisite to setting up a DNSPolicy. Instead it will be expected that the zone already exists in the provider of choice. If it does not exist, you will see this reflected as an error state in the DNSPOlicy status. Credentials will continue to be stored in secrets by default, but these secrets will also be where any additional zone configuration is also applied such as the zone id to target and the root domain in that zone to use.
+There will no longer be a `ManagedZone` resource that needs to be created as a pre-requisite to setting up a DNSPolicy. Instead it will be expected that a zone already exists in the provider of choice. If a suitable zone does not exist, you will see this reflected as an error state in the DNSPolicy status. Credentials will continue to be stored in secrets by default, but these secrets will also be where any additional zone configuration is also applied such as the zone id to target and the root domain in that zone to use.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -41,25 +41,43 @@ Where we use the existing credential in the kuadrant operator we will now load a
 type: kuadrant.io/aws
 ```
 
- All of the tests will be updated/removed as needed. We will rename the `managedZoneRef` property to be `providerRefs` that will be a required field. This will be an array type with the `maxItems` set to 1 initially. 
-
+All the tests will be updated/removed as needed. We will rename the `managedZoneRef` property to be `providerRefs` that will be a required field. This will be an array type with the `maxItems` set to 1 initially. 
 
 Any issues updating/contacting a target DNS provider will be reflected in the existing `recordConditions` status via the existing `synchronised` condition.
 
 ## Secret structure
 
-under the data field we will expect two new fields to be present
+Under the data field two new optional filter fields can be added
 
 ```
-
-ZONE_ID: somezone
-DOMAIN_NAME: *.a.b.com
-
+ZONE_ID_FILTER: somezone
+DOMAIN_NAME_FILTER: a.b.com
 ```
 
 Validation of the secret structure will happen in the dns operator rather than doing it once in the kuadrant operator and again in the dns operator. If the secret doesn't exist or if the required fields are not present the status of the DNSRecord will be updated to reflect the issue and the DNSPOlicy will reflect this status condition in its existing `recordConditions` section as it does now.
 DNSPolicy controller will only validate that the specified DOMAIN exists in the target gateway. If it does not exist it will mark this in the status of DNSPolicy.
 
+Note: Adding no filters means that the provider will consider all zones that you supplied provider credentials have access to.
+
+Example:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: myawsroute53
+type: kuadrant.io/aws
+stringData:
+  ZONE_DOMAIN_FILTER: "example.com,foo.example.com"
+  ZONE_ID_FILTER: "/hostedzone/12345abcd,/hostedzone/dcba54321"
+```
+
+### ZONE_ID_FILTER
+
+The zone id filter allows a comma seperated list of zone ids to be added to the secret that will scope the zones that can be assigned to DNSRecords and have records published into.  
+
+### ZONE_DOMAIN_FILTER
+
+The zone domain filter allows a comma seperated list of zone dns names to be added to the secret that will scope the zones that can be assigned to DNSRecords and have records published into.
 
 ## Secret deletion / modification
 
