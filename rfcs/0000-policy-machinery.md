@@ -128,7 +128,7 @@ Part of the work consists on refactoring, without value perceived by the user.
 
 #### Annotations
 
-Use of annnotations to track back references from targeted objects to policies. This approach has bee slowly deprecated to favour the use of an in-memory directed acyclic graph (DAG) representing the relationship between network objects and policies[^6].
+Use of annnotations to track back references from targeted objects to policies. This approach has been slowly deprecated to favour the use of an in-memory directed acyclic graph (DAG) representing the relationship between network objects and policies[^6].
 
 #### Bottom-up reconciliation
 
