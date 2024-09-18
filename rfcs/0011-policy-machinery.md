@@ -112,7 +112,7 @@ From that on, the following steps drive leveraging the Policy Machinery in the K
 
     3. Store a DOT representation of the topology graph in a ConfigMap.
 
-[^3]: Specific steps can be filter by type of event.
+[^3]: Specific steps can be filtered by type of event.
 
 [^4]: While the DNS operator as well as the configuration performed by the Kuadrant Operator for a TLSPolicy are closer to the _enforcement_ of the specifications in the DNS and TLS policy objects, Authorino and Limitador are policy _decision_ points (PDP) rather. Indistinctively, control-plane operations that configure a service based on the specification of a policy, as well as the data-plane protection services that perform at request-time along with the gateways are all part of the policy enforcement.
 
