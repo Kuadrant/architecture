@@ -106,7 +106,7 @@ The `kuadrant.io/lb-attribute-geo-code` attribute value is provider specific, us
 
 ### DNS Record Structure
 
-This is an advanced topic and so is broken out into its own proposal doc [DNS Record Structure](../../multicluster-gateway-controller/docs/proposals/DNSRecordStructure.md)
+This is an advanced topic and so is broken out into its own proposal doc [DNS Record Structure](0003-dns-policy-assets/DNSRecordStructure.md)
 
 
 ### Custom Weighting 
@@ -273,19 +273,11 @@ However, there is still significant value even with this limitation. This limita
 
 ## Background Docs
 
-[DNS Provider Support](../../multicluster-gateway-controller/docs/proposals/multiple-dns-provider-support.md) 
-
-[AWS DNS](../../multicluster-gateway-controller/docs/proposals/assets/multiple-dns-provider-support/aws/aws.md)
-
-[Google DNS](../../multicluster-gateway-controller/docs/proposals/assets/multiple-dns-provider-support/google/google.md)
-
-[Azure DNS](../../multicluster-gateway-controller/docs/proposals/assets/multiple-dns-provider-support/azure/azure.md)
-
+[DNS Provider Support](https://github.com/Kuadrant/multicluster-gateway-controller/blob/main/docs/proposals/multiple-dns-provider-support.md)
 
 [Direct Policy Attachment](https://gateway-api.sigs.k8s.io/references/policy-attachment/#direct-policy-attachment) 
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
-An alternative is to configure all of this yourself manually in a dns provider. This is can be a highly complex dns configuration that it would be easy to get wrong.
-
+An alternative is to configure all of this yourself manually in a dns provider. This can be a highly complex dns configuration that it would be easy to get wrong.
