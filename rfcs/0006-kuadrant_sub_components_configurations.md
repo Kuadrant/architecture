@@ -4,6 +4,7 @@
 - Start Date: 2023-09-11
 - RFC PR: [Kuadrant/architecture#25](https://github.com/Kuadrant/architecture/pull/25)
 - Issue tracking: [Kuadrant/kuadrant-operator#163](https://github.com/Kuadrant/kuadrant-operator/issues/163)
+- Status: Withdrawn
 
 # Summary
 [summary]: #summary
