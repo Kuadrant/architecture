@@ -1,10 +1,10 @@
 # Kuadrant Architectural Overview
 
 <!--- variables for repeated links --->
-[AuthPolicy]: https://docs.kuadrant.io/kuadrant-operator/doc/auth/
-[RateLimitPolicy]: https://docs.kuadrant.io/kuadrant-operator/doc/rate-limiting/
-[TLSPolicy]: https://docs.kuadrant.io/kuadrant-operator/doc/tls/
-[DNSPolicy]: https://docs.kuadrant.io/kuadrant-operator/doc/dns/
+[AuthPolicy]: https://docs.kuadrant.io/dev/kuadrant-operator/doc/overviews/auth/
+[RateLimitPolicy]: https://docs.kuadrant.io/dev/kuadrant-operator/doc/overviews/rate-limiting/
+[TLSPolicy]: https://docs.kuadrant.io/dev/kuadrant-operator/doc/overviews/tls/
+[DNSPolicy]: https://docs.kuadrant.io/dev/kuadrant-operator/doc/overviews/dns/
 [KuadrantCRD]: https://github.com/Kuadrant/kuadrant-operator/blob/main/doc/reference/kuadrant.md
 
 
@@ -63,7 +63,7 @@ The data plane components sit in the request flow and are responsible for enforc
 * Complies with the Envoy external auth API to provide auth integration to the gateway. It provides both Authn and Authz. Consumes AuthConfigs created by the kuadrant operator based on the defined `AuthPolicy` API.
 
 #### [WASM Shim](https://github.com/Kuadrant/wasm-shim)
-* Uses the [Proxy WASM ABI Spec](https://github.com/proxy-wasm/spec) to integrate with Envoy and provide filtering and connectivity to Limitador for request time enforcement of and rate limiting.
+* Uses the [Proxy WASM ABI Spec](https://github.com/proxy-wasm/spec) to integrate with Envoy and provide filtering and connectivity to Limitador (for request time enforcement of rate limiting) and Authorino (for request time enforcement of authentication & authorization).
 
 
 ### Single Cluster Layout 
@@ -76,8 +76,8 @@ In a single cluster, you have the Kuadrant control plane and data plane sitting 
 ### Multi-Cluster 
 
 In the default multi-cluster setup. Each individual cluster has Kuadrant installed. Each of these clusters are unaware of the other. They are effectively operating as single clusters. The multi-cluster aspect is created by sharing access with the DNS zone, using a shared host across the clusters and leveraging shared counter storage. 
-The zone is operated on independently by each of DNS operator on both clusters to form a single cohesive record set. More details on this can be found in the following RFC document: TODO add link.
-The rate limit counters can also be shared and used by different clusters in order to provide global rate limiting. This is achieved by connecting each instance of Limitador to a shared data store that uses the Redis protocol. There is another option available for achieving multi-cluster connectivity (see intgrations below) that requires the use of a "hub" cluster and integration with OCM (open cluster management).
+The zone is operated on independently by each of DNS operator on both clusters to form a single cohesive record set. More details on this can be found in the [following RFC](https://github.com/Kuadrant/architecture/pull/70).
+The rate limit counters can also be shared and used by different clusters in order to provide global rate limiting. This is achieved by connecting each instance of Limitador to a shared data store that uses the Redis protocol.
 
 ![](./images/multi-cluster-layout.jpg)
 
@@ -111,20 +111,9 @@ Finally, the visualisation component (Grafana) is centralised as well, with data
 
 ### Dependencies
 
-#### [Istio](https://istio.io): **Required**
-* Gateway API provider that Kuadrant integrates with via WASM and Istio APIS to provide service protection capabilities. Kuadrant configures Envoy via the Istio control plane in order to enforce the applied policies and register components such as Authorino and Limitador. 
+#### [Istio](https://istio.io) or [Envoy Gateway](https://gateway.envoyproxy.io/):
+* Gateway API provider that Kuadrant integrates with via WASM to provide service protection capabilities. Kuadrant configures Envoy Proxy via the Istio/Envoy Gateway control plane in order to enforce the applied policies and register components such as Authorino and Limitador. 
 * Used by [`RateLimitPolicy`][RateLimitPolicy] and [`AuthPolicy`][AuthPolicy]
 #### [Gateway API](https://github.com/kubernetes-sigs/gateway-api): **Required**
 * New standard for Ingress from the Kubernetes community
 * Gateway API is the core API that Kuadrant integrates with.
-
-#### Integrations
-
-#### [Open Cluster Manager](https://open-cluster-management.io/): **Optional**
-* Provides a multi-cluster control plane to enable the defining and distributing of Gateways across multiple clusters.
-
-While the default setup is to leverage a distributed configuration for DNS and rate limiting. There is also a component that offers experimental integration with Open Cluster Management. 
-
-In this setup, the OCM integration controller is installed into the HUB alongside the DNS Operator and the cert-manager. This integration allows you to define gateways in the Hub and distribute them to "spoke" clusters. The addresses of these gateways are gathered from the spokes and aggregated back to the hub. The Kuadrant operator and DNS operator then act on this information as though it were a single cluster gateway with multiple addresses. The DNS zone in the configured DNS provider is managed centrally by one DNS operator instance.
-
-![](./images/high-level-multi-cluster.png)
