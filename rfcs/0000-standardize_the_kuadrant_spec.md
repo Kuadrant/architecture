@@ -13,7 +13,7 @@ This RFC is trying to describe a common API design that can be used when adding 
 # Motivation
 [motivation]: #motivation
 
-As we are move forward with the development of Kuadrant, we are wanting to add new features to the product.
+As we move forward with the development of Kuadrant, we are wanting to add new features to the product.
 Some of these features will be configurable by the user, the Kuadrant CR is an expected place for this to happen. 
 Before starting to add these configurable features, a standardize way of defining features in the Kuadrant CR should be agreed upon. 
 This RFC lays the groundwork for an API design which the new features will follow.
@@ -216,6 +216,10 @@ A few examples of what this can include are:
 - Does another project have a similar feature?
 - What can be learned from it? What's good? What's less optimal?
 - Papers: Are there any published papers or great posts that discuss this? If you have some relevant papers to refer to, this can serve as a more detailed theoretical background.
+
+## Similar Features in other projects
+- Kiali Custom Resource configuration [https://kiali.io/docs/configuration/kialis.kiali.io/](https://kiali.io/docs/configuration/kialis.kiali.io/)
+- Prometheus and Alermanager Custom Resource configurations [https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api-reference/api.md#monitoringcoreoscomv1](https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api-reference/api.md#monitoringcoreoscomv1)
 
 This section is intended to encourage you as an author to think about the lessons from other tentatives - successful or not, provide readers of your RFC with a fuller picture.
 
