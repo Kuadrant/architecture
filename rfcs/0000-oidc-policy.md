@@ -99,9 +99,11 @@ spec:
     authorizationEndpointPayload:
       query:
         client_id: provider.credentials.clientID
-        redirect_uri: >- route.gateway.listeners[0].hostname + "/oauth/callback"
-        scope: >- "openid"
-        response_type: >- "code"
+        redirect_uri: route.gateway.listeners[0].hostname + "/oauth/callback"
+        scope: |- 
+          "openid"
+        response_type: |-
+          "code"
     tokenEndpoint: https://gitlab.com/oauth/token
     introspectionEndpoint: https://gitlab.com/oauth/introspect
     jwksUri: https://gitlab.com/oauth/discovery/keys
