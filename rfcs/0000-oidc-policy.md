@@ -180,4 +180,6 @@ then remains is writing the mapper controller for "translating" the `OpenIDConne
 
  - Add support for letting the upstream deal with the token exchange?
  - Add support for letting Kuadrant (i.e. Authorino?) exchange the token with the Identity Provider and store it?
+ - Investigate how to expand on the authorization aspect: either by composing with another resource, expanding that one,
+   leveraging defaults & overrides, have the user fix it a the `AuthPolicy` layer themselves, ... ?
 
