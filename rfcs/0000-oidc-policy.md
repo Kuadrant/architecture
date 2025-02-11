@@ -32,7 +32,7 @@ Kuadrant:
 [guide-level-explanation]: #guide-level-explanation
 
 The `OpenIDConnectPolicy` is a direct policy attachment that attaches to one or multiple
-[`HttpRoute`](https://gateway-api.sigs.k8s.io/api-types/httproute/) objects. Targeted routes will require requests to
+[`HTTPRoute`](https://gateway-api.sigs.k8s.io/api-types/httproute/) objects. Targeted routes will require requests to
 carry an access token to be authorized through. Should the token be missing or be invalid, the requesting entity gets
 redirected to the `provider`'s `authorizationEndpoint` specified in the policy for them to identify.
 
@@ -44,7 +44,7 @@ is the default source), or by a Cookie.
 
 Using a very minimal example, we'll use
 [gitlab.com](https://docs.gitlab.com/ee/integration/openid_connect_provider.html) as our provider for an OpenID Connect
-flow to protect all requests routed to our application by the `HttpRoute`.
+flow to protect all requests routed to our application by the `HTTPRoute`.
 
 ```yaml
 apiVersion: kuadrant.io/v1alpha1
@@ -55,7 +55,7 @@ spec:
   targetRef:
     name: toystore
     group: gateway.networking.k8s.io
-    kind: HttpRoute
+    kind: HTTPRoute
   provider:
     host: gitlab.com
     credentials:
@@ -90,7 +90,7 @@ spec:
   targetRef:
     name: toystore
     group: gateway.networking.k8s.io
-    kind: HttpRoute
+    kind: HTTPRoute
   tokenSource: authorizationHeader
   provider:
     host: gitlab.com
@@ -129,7 +129,7 @@ Kuadrant will also automatically append a query string to the `authorizationEndp
 contain data inferred from the configuration itself, as well as some defaults:
 
  - `client_id`: from the `provider`'s `credential` section
- - `redirect_uri`: composed of `host`, inferred if there is a single listener for the `Gateway` the targeted `HttpRoute`
+ - `redirect_uri`: composed of `host`, inferred if there is a single listener for the `Gateway` the targeted `HTTPRoute`
    is pointed to; and the `path`, which defaults to `/oauth/callback`
  - `scope`: defaults to `openid`
  - `response_type`: defaulting to `code`
