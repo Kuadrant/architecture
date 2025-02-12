@@ -57,12 +57,12 @@ spec:
     group: gateway.networking.k8s.io
     kind: HTTPRoute
   provider:
-    host: gitlab.com
+    issuer: https://gitlab.com
     credentials:
       clientID: 35001bfef37042bf2fb125e9e8f99f0c719231632ab62a18cbf5220c3d1f8f10
 ```
 
-First we need to provide the `host` of our `provider`, in this case `gitlab.com`. Kuadrant will default to using 
+First we need to provide the `issuer` of our `provider`, in this case `gitlab.com`. Kuadrant will default to using 
 `https` to [query the provider for the additional metadata](https://datatracker.ietf.org/doc/html/rfc8414) it requires
 from [gitlab's endpoing](https://gitlab.com/.well-known/openid-configuration), initially the `authorizationEndpoint` to which 
 to redirect unauthorized requests to.
@@ -93,7 +93,7 @@ spec:
     kind: HTTPRoute
   tokenSource: authorizationHeader
   provider:
-    host: gitlab.com
+    issuer: https://gitlab.com
     discoveryEndpoint: https://gitlab.com/.well-known/openid-configuration
     authorizationEndpoint: https://gitlab.com/oauth/authorize
     authorizationEndpointPayload:
@@ -122,8 +122,8 @@ token from the identity provider, i.e. gitlab, as well as storing it and sending
 application.
 
 While we do need the `authorizationEndpoint` to redirect unauthorized requests to the identity provider, as well as the
-`jwksUri` to validate the token when one is present, these can be inferred from the `host` by querying the
-`discoveryEndpoint` from the provider, which itself is inferred from the `host`.
+`jwksUri` to validate the token when one is present, these can be inferred from the `issuer` by querying the
+`discoveryEndpoint` from the provider, which itself is inferred from the `issuer`.
 
 Kuadrant will also automatically append a query string to the `authorizationEndpoint` when forwarding a user. That will
 contain data inferred from the configuration itself, as well as some defaults:
