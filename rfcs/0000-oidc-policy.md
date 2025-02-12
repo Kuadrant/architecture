@@ -25,7 +25,7 @@ Kuadrant:
  - it is _not_ the goal to expose all the power of the `AuthPolicy` to the user through the new policy, but rather to let
    users achieve most of their goals by slowly exploring defaults of the policy and eventually dig down the stack, into
    the `AuthPolicy` to expand their use cases when they need it;
- - explore how to, overtime, grow the initial minimal API of the policy into a larger one to cover more use cases than
+ - explore how to, over time, grow the initial minimal API of the policy into a larger one to cover more use cases than
    the one currently set as the goal for this RFC
 
 # Guide-level explanation
