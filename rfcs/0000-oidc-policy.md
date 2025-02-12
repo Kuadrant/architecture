@@ -62,9 +62,9 @@ spec:
       clientID: 35001bfef37042bf2fb125e9e8f99f0c719231632ab62a18cbf5220c3d1f8f10
 ```
 
-First we need to provide the `issuer` of our `provider`, in this case `gitlab.com`. Kuadrant will default to using 
-`https` to [query the provider for the additional metadata](https://datatracker.ietf.org/doc/html/rfc8414) it requires
-from [gitlab's endpoing](https://gitlab.com/.well-known/openid-configuration), initially the `authorizationEndpoint` to which 
+First we need to provide the `issuer` of our `provider`, in this case `https://gitlab.com`. Kuadrant will default 
+to [querying the provider for the additional metadata](https://datatracker.ietf.org/doc/html/rfc8414) it requires
+from [gitlab's endpoint](https://gitlab.com/.well-known/openid-configuration), initially the `authorizationEndpoint` to which 
 to redirect unauthorized requests to.
 
 If the request for the additional metadata fails, all access to the protected resources will be `Unauthorized`. All the
