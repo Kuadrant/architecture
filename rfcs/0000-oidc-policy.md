@@ -143,7 +143,7 @@ contain data inferred from the configuration itself, as well as some defaults:
 ## Dependencies
 [dependencies]: #dependencies
 
-> [!warning] WIP
+> [!warning]
 > This is still work in progress and is mostly blocked on the Kuadrant Open Architecture efforts.
 > Below are the features needed to implement the above, which are expected to be provided by the underlying infrastructure.
 
