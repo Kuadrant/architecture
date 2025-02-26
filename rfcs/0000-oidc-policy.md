@@ -100,10 +100,8 @@ spec:
       query:
         client_id: provider.credentials.clientID
         redirect_uri: route.gateway.listeners[0].hostname + "/oauth/callback"
-        scope: |- 
-          "openid"
-        response_type: |-
-          "code"
+        scope: openid
+        response_type: code
     tokenEndpoint: https://gitlab.com/oauth/token
     introspectionEndpoint: https://gitlab.com/oauth/introspect
     jwksUri: https://gitlab.com/oauth/discovery/keys
@@ -131,8 +129,8 @@ contain data inferred from the configuration itself, as well as some defaults:
  - `client_id`: from the `provider`'s `credential` section
  - `redirect_uri`: composed of `host`, inferred if there is a single listener for the `Gateway` the targeted `HTTPRoute`
    is pointed to; and the `path`, which defaults to `/oauth/callback`
- - `scope`: defaults to `openid`
- - `response_type`: defaulting to `code`
+ - `scope`: defaults to `openid` (which is CEL context specific root binding, which itself defaults to the CEL value `"openid"`)
+ - `response_type`: defaulting to `code` (as above, a CEL context specific root binding, to `"code"`)
 
  All of which can be overridden by explicitly configuring the `authorizationEndpointPayload` explicitly. Any entry can
  be added, the value needs to be a valid CEL expression and will be encoded depending on the how the payload is to be
@@ -142,7 +140,28 @@ contain data inferred from the configuration itself, as well as some defaults:
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-### WIP 
+## Dependencies
+[dependencies]: #dependencies
+
+> [!warning] WIP
+> This is still work in progress and is mostly blocked on the Kuadrant Open Architecture efforts.
+> Below are the features needed to implement the above, which are expected to be provided by the underlying infrastructure.
+
+### CEL: Kuadrant specialized `Env`
+
+We would need a specialized [`Env`](https://github.com/google/cel-go/blob/v0.24.0/cel/env.go#L131-L158), i.e. customized
+to each context that's defined in a CRD (e.g. a `OpenIDConnectProvider.AuthorizationEndpointPayload`)
+
+### Callback registration
+
+To provide a way to resolve default values, or validate user provided values to depend on Gateway API objects, the
+actor handling the metapolicy would need to be informed of changes to the said objects. 
+
+### A metapolicy registry
+
+A way to register the `OpenIDConnectPolicy` Kuadrant and/or the "metapolicy" controller
+
+## Other considerations
 
 Some of this I think I have sorted out in a proof of concept... But I'm not completely done yet.
 I'm trying to see if I can get away with: 
@@ -160,6 +179,8 @@ then remains is writing the mapper controller for "translating" the `OpenIDConne
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
+ - While we could make this all work with a [Metacontroller](https://metacontroller.github.io/metacontroller/), either
+   one to control all metapolicies or one per metapolicy, without the infrastructure described in the [above dependencies](#dependencies).
  - This iteration is fairly low risk. It tries to make this all work with multiple OIDC providers, starting with Gitlab.
  - Today, no changes are required to `AuthorizationPolicy` or `Authorino` nor any other component in Kuadrant, this only 
    does some to the heavy lifting for the users. 
