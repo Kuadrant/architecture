@@ -159,7 +159,8 @@ actor handling the metapolicy would need to be informed of changes to the said o
 
 ### A metapolicy registry
 
-A way to register the `OpenIDConnectPolicy` Kuadrant and/or the "metapolicy" controller
+A way to register the `OpenIDConnectPolicy` with Kuadrant, or the "metapolicy" controller if we design it as an external
+extension.
 
 ## Other considerations
 
