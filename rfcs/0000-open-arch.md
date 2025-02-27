@@ -38,7 +38,31 @@ higher-level abstraction to our existing policies.
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-## Implementing a custom metapolicy
+## What's a *Metapolicy*?
+
+A *Metapolicy* is a policy just like any other [Gateway API Policy][2], other than it only produces one or more "core
+Kuadrant policies". A *Metapolicy* is managed by a `MetapolicyController` that will interact with the
+`KuadrantController` to integrate seamlessly in the ecosystem.
+
+Think of a `MetapolicyController` being a pure function that takes the custom *Metapolicy* and the Gateway API network
+objects it targets as input, and outputs one or more Kuadrant Policies as a result.
+
+## Implementing a custom *Metapolicy*
+
+Fundamentally a *Metapolicy* isn't much different from a regular Kubernetes [Custom
+Resource](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/), and as such will be
+managed by some controller. Unlike a regular [Kubernetes
+Controller](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#custom-controllers),
+it also needs to reconcile when changes to properties of the Gateway API it uses are observed. For that reason, the
+controller for a custom *Metapolicy* registers itself with the `KuadrantController`.
+
+> [!NOTE]
+> Below is the proposed inital integration point for `MetapolicyController`s. The idea is to keep the deployment model
+> fairly open moving forward. As of now, this would be the deployment model for _our own *Metapolicies*
+
+
+> [!TODO]
+> Some initial SDK usage example
 
 
 # Reference-level explanation
@@ -48,11 +72,25 @@ higher-level abstraction to our existing policies.
 
 ### gRPC to controller
 
-- Unix socket for "in-pod/embedded" plugins
+- [ ] Unix socket for "in-pod/embedded" plugins
+- [ ] Declarative way to load plugins
+- [ ] Provide a decorated [Controller Runtime](https://github.com/kubernetes-sigs/controller-runtime) Golang that
+  provides the changes triggered by the DAG
 
 ### gRPC streams for eventing on the DAG
 
-- subscriptions infered from CEL
+- [ ] Subscriptions infered from CEL and the current CR being reconcilied
+
+### Typed DSL in CEL
+
+> [!IMPORTANT]
+> Provide both the `MetapolicyCR` & the `GwAPIContext` instances relative to a reconciliation
+> The `GwAPIContext` would not only be responsible for resolving the [CEL expressions][3] but also deriving the
+> necessary subscriptions needed to inform the controller when a reconciliation is needed because of changes to the
+> Gateway API objects queried
+
+- [ ] Support existing `context`s in the CEL interpreter's `Env`
+- [ ] Find a way to express the `context`s present/set for each CEL
 
 
 # Drawbacks
