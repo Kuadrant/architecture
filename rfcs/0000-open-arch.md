@@ -44,6 +44,16 @@ higher-level abstraction to our existing policies.
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
+## Plugin architecture
+
+### gRPC to controller
+
+- Unix socket for "in-pod/embedded" plugins
+
+### gRPC streams for eventing on the DAG
+
+- subscriptions infered from CEL
+
 
 # Drawbacks
 [drawbacks]: #drawbacks
