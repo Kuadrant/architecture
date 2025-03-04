@@ -8,9 +8,9 @@
 # Summary
 [summary]: #summary
 
-Kuadrant has been so far mostly focus on specific areas: AuthN/Z, DNS, TLS and Rate Limiting. Most of these areas
-evolved in silos, independently from each other. There were some effort to either standardize certain aspects and some
-of these features work somewhat in tandem, in the form of authenticated rate limiting, which somewhat integrates two of
+Kuadrant has been so far mostly focused on specific areas: AuthN/Z, DNS, TLS and Rate Limiting. Most of these areas
+evolved in silos, independently from each other. There were some efforts to standardize certain aspects and get some
+of these features to work somewhat in tandem, in the form of authenticated rate limiting, which integrates two of
 the areas Kuadrant concerns itself with.
 
 The intent of this proposal is to formalize Kuadrant as a _platform_ to extend [Gateway API][1] functionality through the use
@@ -26,10 +26,10 @@ A few components emerged overtime that play a central role in _how_ functionalit
 - The [DAG][4] representing the current state of the cluster regarding Gateway API objects, as well as the policies
   attached to them;
 - The [wasm-shim][https://github.com/Kuadrant/wasm-shim/?tab=readme-ov-file#sample-configuration] through its
-  configuration, enabling Kuadrant's own "filter chain".
+  configuration, enabling Kuadrant's own "filter chain" equivalent within the Gateway.
 
 The idea would be to expand on these components and formalizing their interfaces to their respective consumers. While
-these are solid building blocks, as proven by our current experience with those to build existing features, we would
+these are solid building blocks, as proven by our current experience with those in building existing features, we would
 need to open Kuadrant up to make use of these to support a modular model for policies.
 
 Initially, users would only be exposed to these changes through _metapolicies_, domain specific policies that expose a
@@ -51,7 +51,7 @@ objects it targets as input, and outputs one or more Kuadrant Policies as a resu
 
 Fundamentally a *Metapolicy* isn't much different from a regular Kubernetes [Custom
 Resource](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/), and as such will be
-managed by some controller. Unlike a regular [Kubernetes
+managed by some controller. But unlike a regular [Kubernetes
 Controller](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#custom-controllers),
 it also needs to reconcile when changes to properties of the Gateway API it uses are observed. For that reason, the
 controller for a custom *Metapolicy* registers itself with the `KuadrantController`.
