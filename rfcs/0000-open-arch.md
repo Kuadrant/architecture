@@ -161,6 +161,17 @@ registered with the Kuadrant Controller from its own config file.
 - [ ] Find a way to express the `context`s present/set for each CEL
 
 
+### Deployment
+
+> [!IMPORTANT]
+> This would initially be deployed as their own processes running alongside the kuadrant controller. They'd communicate
+> though unix sockets, over gRPC & gRPC streams (for the eventing).
+>
+> Later, we could support different deployment models, as all that'd be needed is being able to use gRPC essentially.
+
+- [ ] Known location for plugins to live in; one per directory
+- [ ] Unix socket opened within the same location?
+
 # Drawbacks
 [drawbacks]: #drawbacks
 
