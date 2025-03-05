@@ -65,38 +65,38 @@ The example below is a modified example from the
 
 ```go
 func (r *reconcileMetapolicy) Reconcile(ctx context.Context, request reconcile.Request, kuadrant *KuadrantContext) (reconcile.Result, error) {
-	// Fetch the MetaPolicy from the cache
-	rs := &user.MetaPolicy{}
-	err := r.client.Get(ctx, request.NamespacedName, rs)
-	if errors.IsNotFound(err) {
-		log.Error(nil, "Could not find MetaPolicy")
-		return reconcile.Result{}, nil
-	}
+  // Fetch the MetaPolicy from the cache
+  rs := &user.MetaPolicy{}
+  err := r.client.Get(ctx, request.NamespacedName, rs)
+  if errors.IsNotFound(err) {
+    log.Error(nil, "Could not find MetaPolicy")
+    return reconcile.Result{}, nil
+  }
 
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("could not fetch MetaPolicy: %+v", err)
-	}
+  if err != nil {
+    return reconcile.Result{}, fmt.Errorf("could not fetch MetaPolicy: %+v", err)
+  }
 
-	// Set the label if it is missing
-	if rs.Labels == nil {
-		rs.Labels = map[string]string{}
-	}
+  // Set the label if it is missing
+  if rs.Labels == nil {
+    rs.Labels = map[string]string{}
+  }
 	
-    // resolve the CEL expression using the `KuadrantContext`
-    label := kuadrant.evaluateExpression("kuadrant.gatewaysFor(self)[0].metadata.name")
+  // resolve the CEL expression using the `KuadrantContext`
+  label := kuadrant.evaluateExpression("kuadrant.gatewaysFor(self)[0].metadata.name")
 
-	if rs.Labels["gateway"] == label {
-		return reconcile.Result{}, nil
-	}
+  if rs.Labels["gateway"] == label {
+    return reconcile.Result{}, nil
+  }
 
-	// Update the MetaPolicy 
-	rs.Labels["gateway"] = label 
-	err = r.client.Update(ctx, rs)
-	if err != nil {
-		return reconcile.Result{}, fmt.Errorf("could not write MetaPolicy: %+v", err)
-	}
+  // Update the MetaPolicy
+  rs.Labels["gateway"] = label
+  err = r.client.Update(ctx, rs)
+  if err != nil {
+    return reconcile.Result{}, fmt.Errorf("could not write MetaPolicy: %+v", err)
+  }
 
-	return reconcile.Result{}, nil
+  return reconcile.Result{}, nil
 }
 ```
 It on differs in three ways from the original example:
