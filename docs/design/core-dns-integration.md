@@ -68,9 +68,19 @@ When the DNS Operator sees a DNSRecord that has been configured with a core dns 
 
 #### CoreDNS Kaudrant Plugin
 
-The CoreDNS kuadrant plugin follows the [Core DNS plugin](https://coredns.io/manual/plugins/) model. It sets up watch on kuadrant's DNSRecord resources and as it discovers them processes them and adds the endpoints to the zone.
+The CoreDNS kuadrant plugin follows the [Core DNS plugin](https://coredns.io/manual/plugins/) model. It sets up watch and listers on kuadrant's DNSRecord resources in the k8s cluster and as it discovers them processes them and adds the endpoints to the appropriate DNS zone with the correct GEO and Weighted data.
 
-TODO understand more of what this is doing
+**Weighting**
+
+For weighted responses, the Kaudrant plugin builds a list of all the available records that could be provided as the answer to a given query from within the identified zone. It then applies a weighting algorithm to decide on a single response depending on the individual record weighting. It is effectively decided each time based on a random number between 0 and the sum of all the weights. So it is not a super predictable response but is a correctly weighted response.
+
+**GEO**
+
+GEO data is sourced from a geo database such as MaxMind. This is then made available via the existing [GEO plugin](https://coredns.io/plugins/geoip/) from CoreDNS. This plugin must execute before the Kuadrant plugin in order for GEO based responses to be provided. With this pluign enabled, Kuadrant can use the GEO data to decide which record to return to the DNS query.
+
+**Weighting within a GEO**
+
+It can be the case that you have multiple endpoints within a single GEO and want to weight traffic across those endpoints. In this case the Kuadrant plugin will first apply the GEO filter and then use the weighting filter on the result if there is more than one endpoint within a given GEO.
 
 #### kdrnt TLD
 
