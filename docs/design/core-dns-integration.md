@@ -76,7 +76,7 @@ For weighted responses, the Kaudrant plugin builds a list of all the available r
 
 **GEO**
 
-GEO data is sourced from a geo database such as MaxMind. This is then made available via the existing [GEO plugin](https://coredns.io/plugins/geoip/) from CoreDNS. This plugin must execute before the Kuadrant plugin in order for GEO based responses to be provided. With this pluign enabled, Kuadrant can use the GEO data to decide which record to return to the DNS query.
+GEO data is sourced from a geo database such as MaxMind. This is then made available via the existing [GEO plugin](https://coredns.io/plugins/geoip/) from CoreDNS. This plugin must execute before the Kuadrant plugin in order for GEO based responses to be provided. With this plugin enabled, Kuadrant can use the GEO data to decide which record to return to the DNS query.
 
 **Weighting within a GEO**
 
