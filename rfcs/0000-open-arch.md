@@ -38,14 +38,38 @@ higher-level abstraction to our existing policies.
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
+While this proposal does enable the work on `Metapolicy`ies as they are mostly understood today, it actually abstracts
+the very essence of what the Kuadrant controller already is, i.e. a metacontroller that knows about the so-called
+"State-of-the-World" (or SotW), the directed acyclic graph (or DAG) we use to represent the state of the different
+Gateway API network objects and how policies attach to them.
+
+Aside that particularity of the SotW knowledge, certainly as far as the data-plane is concerned, the Kuadrant controller
+ingests `Auth-` and `RateLimit-` `Policy`ies and outputs `AuthConfig` and `Limit` CR respectively, while configuring the
+`Gateway`(s) as required, by configuring the wasm-shim they are running.
+
 ## What's a *Metapolicy*?
 
-A *Metapolicy* is a policy just like any other [Gateway API Policy][2], other than it only produces one or more "core
+A *Metapolicy* is a policy just like any other [Gateway API Policy][2], other than it only affects one or more "core
 Kuadrant policies". A *Metapolicy* is managed by a `MetapolicyController` that will interact with the
 `KuadrantController` to integrate seamlessly in the ecosystem.
 
 Think of a `MetapolicyController` being a pure function that takes the custom *Metapolicy* and the Gateway API network
-objects it targets as input, and outputs one or more Kuadrant Policies as a result.
+objects it targets as input, and alters one or more Kuadrant Policies as a result.
+
+The simplest form will be a one-to-one match and their lifecycle will be the same. When creating the metapolicy, the
+resulting output `Policy` gets created; on updates, it is updated; and, finally, when the metapolicy is deleted, the
+matching core `Policy` also gets deleted.
+
+In other cases tho, a metapolicy might depend directly or indirectly on the existence of another core `Policy`. Further
+more it may need to alter that policy in one way or another.
+
+> [!NOTE]
+> An example of such a policy, would be the `PlanPolicy`. That policy points indirectly to an `AuthConfig`, that it'll use
+> as the source of data to match a request to a "plan". In abstract terms, it would need to alter the `AuthConfig` so that
+> it enriches the metadata available to the wasm-shim (and as such to other services it calls into), with the "plan"
+> identifier, so that limitador can apply the proper limits (and look up the proper counters). So while the `PlanPolicy`
+> would match straight to a `RateLimitPolicy`, it also would need to add, modify and remove that mapping function from,
+> ultimately, the `AuthConfig`.
 
 ## Implementing a custom *Metapolicy*
 
@@ -55,10 +79,6 @@ managed by some controller. But unlike a regular [Kubernetes
 Controller](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/#custom-controllers),
 it also needs to reconcile when changes to properties of the Gateway API it uses are observed. For that reason, the
 controller for a custom *Metapolicy* registers itself with the `KuadrantController`.
-
-> [!TODO]
-> Some initial SDK usage example
-
 
 The example below is a modified example from the 
 [controller-runtime's own example](https://github.com/kubernetes-sigs/controller-runtime/blob/main/examples/builtins/controller.go#L39).
@@ -83,7 +103,7 @@ func (r *reconcileMetapolicy) Reconcile(ctx context.Context, request reconcile.R
   }
 	
   // resolve the CEL expression using the `KuadrantContext`
-  label := kuadrant.evaluateExpression("kuadrant.gatewaysFor(self)[0].metadata.name")
+  label := kuadrant.evaluateExpression("self.findGateways()[0].metadata.name")
 
   if rs.Labels["gateway"] == label {
     return reconcile.Result{}, nil
@@ -103,8 +123,9 @@ It on differs in three ways from the original example:
 
 1. The `Reconcile` signature takes an additional parameter, the `kuadrant *KuadrantContext`;
 1. It acts upon an hypothetical `user.MetaPolicy`;
-1. It uses the `evaluateExpression` to resolve the CEL expression `kuadrant.gatewaysFor(self)[0].metadata.name` instead
-   of using a fixed string for the label's value.
+1. It uses the `evaluateExpression` to resolve the CEL expression `self.findGateways(self)[0].metadata.name` instead
+   of using a fixed string for the label's value. Where `self` is the *Metapolicy* being reconciled.
+1. The Kuadrant CEL Library is the one providing the additional functionality needed to support the different use cases.
 
 Because that expression is evaluated upon creation, the `KuadrantRuntime` will make sure to reconcile whenever that cel
 expression's evaluated result would change; in this particular example whenever the name of the first `Gateway` changes.
@@ -113,52 +134,43 @@ expression's evaluated result would change; in this particular example whenever 
 > Below is the proposed inital integration point for `MetapolicyController`s. The idea is to keep the deployment model
 > fairly open moving forward. As of now, this would be the deployment model for _our own_ *Metapolicies*
 
-To deploy our custom reconciler, we need to let the Kuadrant operator know about it, by adding it to the `Kuadrant` CR:
-
-```yaml
-apiVersion: kuadrant.io/v1beta2
-kind: Kuadrant
-metadata:
-  name: kuadrant-sample
-spec:
-  plugins:
-    userMetaPolicy:
-      deployment: embedded
-```
 
 The `UserMetaPolicy` will need to be packaged with a custom Docker image containing the plugin. It'll be automatically
-registered with the Kuadrant Controller from its own config file.
-
-> [!TODO]
-> Support out-of-image deployments of plugins, i.e. ones running as their own container. Which then also means we need
-> to deal with failures et al, so probably adding the necessity for more configuration options for these plugins
+registered with the Kuadrant Controller when present.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
 ## Plugin architecture
 
-### gRPC to controller
+### Kuadrant's `MetapolicyControllerRuntime`
+
+- [ ] Provides the layer around the standard [Kubernetes' Controller Runtime](https://github.com/kubernetes-sigs/controller-runtime)
+- [ ] Provides a logger to `stderr` for log forwarding, according to tbd formart
+- [ ] Provides a golang API that interfaces with the controller through gRPC (including streams for eventing)
+- [ ] Provides eventing for the changes triggered by the SotW DAG
+- [ ] Handles the lifecycling of the extension, `SIGTEM` handler
+- [ ] *Optional*: Readiness probe, tho looks like we don't need it
+- [ ] *Optional*: More advanced liveliness probe, tho again there probably is no reason
+
+### Kuadrant Controller extension mechanism
 
 - [ ] Unix socket for "in-pod/embedded" plugins
+- [ ] Monitors child processes and restarts them when needed
+- [ ] Forwards `stderr` to a per-extension logger at the appropriate log level
 - [ ] Declarative way to load plugins
-- [ ] Provide a decorated [Controller Runtime](https://github.com/kubernetes-sigs/controller-runtime) Golang that
-  provides the changes triggered by the DAG
 
-### gRPC streams for eventing on the DAG
+### Extension services
 
-- [ ] Subscriptions infered from CEL and the current CR being reconcilied
+- [ ] API to query the SotW DAG, with subscriptions
+- [ ] API to add/modify/delete transformer functions to the DAG
+  - [ ] metadata enrichment ("per action" ?)
+  - [ ] others?
 
-### Typed DSL in CEL
+### CEL Kuadrant Library
 
-> [!IMPORTANT]
-> Provide both the `MetapolicyCR` & the `GwAPIContext` instances relative to a reconciliation
-> The `GwAPIContext` would not only be responsible for resolving the [CEL expressions][3] but also deriving the
-> necessary subscriptions needed to inform the controller when a reconciliation is needed because of changes to the
-> Gateway API objects queried
-
-- [ ] Support existing `context`s in the CEL interpreter's `Env`
-- [ ] Find a way to express the `context`s present/set for each CEL
+- [ ] Support for all Gateway API types through protobuf
+- [ ] Add utility methods to `Policy` type for DAG navigation
 
 
 ### Deployment
