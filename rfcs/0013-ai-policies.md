@@ -12,9 +12,9 @@ AI workloads are becoming more and more prominent of late, and there is consider
 
 This RFC proposes three new Kuadrant APIs in the general AI Gateway realm:
 
-- `TokenRateLimitPolicy`
-- `PromptGuardPolicy` (?)
-- `ChatCompletionGuardPolicy` (?)
+- `LLMTokenRateLimitPolicy`
+- `LLMPromptRiskCheckPolicy`
+- `LLMResponseRiskCheckPolicy`
 
 # Motivation
 [motivation]: #motivation
@@ -22,14 +22,15 @@ This RFC proposes three new Kuadrant APIs in the general AI Gateway realm:
 Why are we doing this? What use cases does it support? What is the expected outcome?
 
 AI workloads are becoming extremely popular. Management of ingress with Gateway API and policies into running model servers is something our policies can augment and enhance.
+The aim is to augement, not replace, the [Gateway API Inference Extensions](https://gateway-api-inference-extension.sigs.k8s.io/) project.
 
 Using the [Inference Platform Admin](https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/main/docs/proposals/002-api-proposal#inference-platform-admin) and [Inference Workload Owner](https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/main/docs/proposals/002-api-proposal#inference-workload-owner) personas, some high-level use-cases we hope to enable are:
 
 - As an Inference Platform Admin, I want to protect my LLM infrastrcture from being overwhelmed by limiting per user token usage across all models.
 - As an Inference Workload Owner, I want to apply token usage limits to specific models so that costs are controlled based on the heaviest GPU using models.
 - As an Inference Workload Owner, I want to apply different token usage limits to different user groups based on business requirements.
-- As an Inference Workload Owner, I want to guard my running model servers from risky prompts with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b), and reject them before they are routed to (expensive) running models
-- As an Inference Workload Owner, I want guard against risky chat completion responses with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b)
+- As an Inference Workload Owner, I want to guard my running model servers from risky prompts (input) with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b), and reject them before they are routed to (expensive) running models
+- As an Inference Workload Owner, I want guard against risky chat completion responses (output) with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b)
 - As an Inference Workload Owner, I want to apply guards against different risky content categories to different user groups based on business requirements.
 
 # Guide-level explanation
