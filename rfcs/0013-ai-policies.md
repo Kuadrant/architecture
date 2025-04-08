@@ -8,12 +8,20 @@
 # Summary
 [summary]: #summary
 
-One paragraph explanation of the feature.
+AI workloads are becoming more and more prominent of late, and there is considerable traction in a number of related Gateway API projects to provide policies and tooling for managing these workloads, from the perspectives of both platform engineering and the app developer.
+
+This RFC proposes three new Kuadrant APIs in the general AI Gateway realm:
+
+- `TokenRateLimitPolicy`
+- `PromptGuardPolicy` (?)
+- `ChatCompletionGuardPolicy` (?)
 
 # Motivation
 [motivation]: #motivation
 
 Why are we doing this? What use cases does it support? What is the expected outcome?
+
+AI workloads are becoming extremely popular. Management of ingress with Gateway API and policies into running model servers is something our policies can augment and enhance.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
