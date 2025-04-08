@@ -36,13 +36,100 @@ Using the [Inference Platform Admin](https://github.com/kubernetes-sigs/gateway-
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-Explain the proposal as if it was implemented and you were teaching it to Kuadrant user. That generally means:
+## Concepts Introduced
 
-- Introducing new named concepts.
-- Explaining the feature largely in terms of examples.
-- Explaining how a user should *think* about the feature, and how it would impact the way they already use Kuadrant. It should explain the impact as concretely as possible.
-- If applicable, provide sample error messages, deprecation warnings, or migration guidance.
-- If applicable, describe the differences between teaching this to existing and new Kuadrant users.
+- Token-based rate limiting: Controls usage by number of tokens, not just requests. Helps manage LLM costs.
+- Prompt guarding: Filters risky or unwanted prompts before they hit model servers.
+- Completion guarding: Reviews and filters model outputs before they're returned to users.
+
+## Example Use Case
+
+Say you're serving a chat LLM behind a Gateway. You want:
+
+- Free-tier users limited to 20k tokens/day.
+- Guardrails to reject prompts asking for harmful, violent or sexual content.
+- Output filtering to block generally harmful completions.
+
+You’d define the following policies:
+
+```yaml
+apiVersion: kuadrant.io/v1alpha1
+kind: LLMTokenRateLimitPolicy
+metadata:
+  name: token-limit-free
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: my-llm-gateway
+  limit:
+    rate:
+      limit: 4
+      window: 10s
+    predicate: 'request.auth.claims["kuadrant.io/groups"].split(",").exists(g, g == "free")' 
+    counter: auth.identity.userid
+```
+
+```yaml
+apiVersion: kuadrant.io/v1alpha1
+kind: LLMPromptRiskCheckPolicy
+metadata:
+  name: prompt-check
+spec:
+  model:
+    url: http://huggingface-granite-guardian-default.example.com/v1
+    apiKey:
+      secretRef:
+        name: granite-api-key
+        key: token
+  categories:
+    - harm
+    - violence
+    - sexual_content
+  response:
+    unauthorized:
+      headers:
+        "content-type":
+          value: application/json
+      body:
+        value: |
+          {
+            "error": "Unauthorized",
+            "message": "Request prompt blocked by content policy."
+          }
+```
+
+```yaml
+apiVersion: kuadrant.io/v1alpha1
+kind: LLMResponseRiskCheckPolicy
+metadata:
+  name: completion-check
+spec:
+  model:
+    url: http://huggingface-granite-guardian-default.example.com/v1
+    apiKey:
+      secretRef:
+        name: granite-api-key
+        key: token
+  categories:
+    - harm
+  response:
+    forbidden:
+      headers:
+        "content-type":
+          value: application/json
+      body:
+        value: |
+          {
+            "error": "Forbidden",
+            "message": "Response blocked by content policy."
+          }
+```
+
+## User Impact
+
+- Existing users: These policies extend existing workflows. Policy attachment is the same; what's different is the semantics (tokens vs requests, prompt filtering, etc).
+- New users: Can adopt Kuadrant to secure and manage LLM workloads from the start.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
