@@ -23,6 +23,13 @@ Why are we doing this? What use cases does it support? What is the expected outc
 
 AI workloads are becoming extremely popular. Management of ingress with Gateway API and policies into running model servers is something our policies can augment and enhance.
 
+Some high-level use-cases we hope to enable:
+
+- As a platform engineer, I want to be able to apply a TokenRateLimitPolicy at ingress to protect our LLM infrastrcture from being overwhelmed
+- As an app developer, I want to be able to apply policies to both `HTTPRoute` and `Gateway` resources to be able to limit the amount of tokens that authenticated users or groups of users can consume in a given window
+- As a platform engineer, I want to be able to guard my running model servers from risky prompts with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b), and reject them before they are routed to (expensive) running models
+- As a platform engineer, I also want to be able to guard against risky chat completion responses with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b)
+
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
