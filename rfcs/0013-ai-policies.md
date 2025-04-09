@@ -94,6 +94,7 @@ metadata:
     app: my-llm
   annotations:
     kuadrant.io/groups: free
+    secret.kuadrant.io/user-id: user-1
 stringData:
   api_key: iamafreeuser
 type: Opaque
