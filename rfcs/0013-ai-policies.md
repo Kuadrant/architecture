@@ -12,9 +12,9 @@ AI workloads are becoming more and more prominent of late, and there is consider
 
 This RFC proposes three new Kuadrant APIs in the general AI Gateway realm:
 
-- `LLMTokenRateLimitPolicy`
-- `LLMPromptRiskCheckPolicy`
-- `LLMResponseRiskCheckPolicy`
+- `LLMTokenRateLimitPolicy` (alts: `TokenRateLimitPolicy`)
+- `LLMPromptRiskCheckPolicy` (alts: `PromptGuardPolicy`, `PromptSafetyPolicy`, `PromptFilterPolicy`)
+- `LLMResponseRiskCheckPolicy` (alts: `CompletionGuardPolicy`, `CompletionSafetyPolicy`)
 
 # Motivation
 [motivation]: #motivation
@@ -35,6 +35,19 @@ Using the [Inference Platform Admin](https://github.com/kubernetes-sigs/gateway-
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
+
+## `LLMTokenRateLimitPolicy`
+
+A Kuadrant `LLMTokenRateLimitPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` & `HTTPRoute`) designed to allow users to define and enforce rate limiting rules to control token usage within OpenAI-style LLM provider APIs. It allows users to set and enforce token budget constraints for Gateways, but also for individual services exposed as HTTPRoutes. Per-user or per-group token rate limiting can be enforced based on JWT claims.
+
+
+## `LLMPromptRiskCheckPolicy`
+
+A Kuadrant `LLMPromptRiskCheckPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` & `HTTPRoute`), enabling users to define and enforce content safety ruless with LLM prompts to detect and block sensitive prompts.  Prompt Guards can be defined and enforced for both Gateways and individual HTTPRoutes.
+
+## `LLMResponseRiskCheckPolicy`
+
+A Kuadrant `LLMResponseRiskCheckPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` & `HTTPRoute`), enabling users to define and enforce content safety ruless with LLM content completion responses, to detect and block sensitive responses from LLMs. These can be defined and enforced for both Gateways and individual HTTPRoutes.
 
 ## Concepts Introduced
 
