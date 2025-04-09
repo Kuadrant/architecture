@@ -204,7 +204,7 @@ In streamed responses, `usage` metrics are included in either the second-to-last
 
 Given the permutations, this will add some extra complexity to how we parse usage metrics. There is a basic Golang example of an `ext_proc` that can parse these metrics (non-streamed responses) here: https://github.com/jasonmadigan/token-ext-proc
 
-We will also want to support llama-stack style responses. Inference chat-completion with llama-stack offers the option for configurable (JSON-schema) guideded `response_format`. This may hint that we'll want to offer some customisation in terms of where to look for metrics.
+We will also want to support llama-stack style responses. Inference chat-completion with llama-stack offers the option for configurable (JSON-schema) guideded `response_format`. This may hint that we'll want to offer some customisation in terms of where to look for metrics, (probably CEL, or JQ-style querying?).
 
 Below are some example completion/response responses:
 
