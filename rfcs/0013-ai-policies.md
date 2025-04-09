@@ -182,11 +182,11 @@ flowchart TD
     C --> D["wasm-shim -> Limitador -> check rate limits"]
     D --> E["EnvoyFilter (ext_proc) for token usage"]
     E --> F["llm guardian for prompt risk checks via ext_proc (likely parallel to usage metrics?)"]
-    F --> G["downstream kserve model server call for inference"]
+    F --> G["downstream model server call for inference"]
     G --> H["EnvoyFilter (ext_proc): parse openai-style usage metrics from model server response"]
     H-->I["call to limitador to increment by token usage count"]
     I --> J["llm guardian for response risk checks via ext_proc"]
-    J --> K["flush completion"]
+    J --> K["flush completion response"]
 ```
 
 ### Parsing OpenAI-style usage metrics
