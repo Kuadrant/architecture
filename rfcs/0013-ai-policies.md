@@ -202,7 +202,7 @@ Many popular model servers implement "OpenAI-compatible" chat completion or resp
 
 In streamed responses, `usage` metrics are included in either the second-to-last or last chunk in a response.
 
-Given the permutations, this will add some extra complexity to how we parse usage metrics.
+Given the permutations, this will add some extra complexity to how we parse usage metrics. There is a basic Golang example of an `ext_proc` that can parse these metrics (non-streamed responses) here: https://github.com/jasonmadigan/token-ext-proc
 
 Below are some example completion/response responses:
 
