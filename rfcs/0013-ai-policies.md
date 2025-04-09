@@ -59,18 +59,45 @@ A Kuadrant `LLMResponseRiskCheckPolicy` is a custom resource provided by Kuadran
 
 ## Example Use Case
 
-
 Say you're serving a chat LLM behind a Gateway, which implements an OpenAI-style chat `/completion` API. You want:
 
 - Free-tier users limited to 20k tokens/day.
 - Guardrails to reject prompts asking for harmful, violent or sexual content.
 - Output filtering to block generally harmful completions.
 
-You’d define the following policies:
+You’d define the following policies and resources:
 
 > Notes (somewhere): OpenAI-style usage metrics in responses required: `"usage":{"prompt_tokens":5,"total_tokens":15,"completion_tokens":10}`
 
 ```yaml
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: free-users-auth
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: my-llm-gateway
+  rules:
+    authorization:
+      "free-users":
+        opa:
+          rego: |
+            groups := split(object.get(input.auth.identity.metadata.annotations, "kuadrant.io/groups", ""), ",")
+            allow { groups[_] == "free" }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-key-free-user-1
+    app: my-llm
+  annotations:
+    kuadrant.io/groups: free
+stringData:
+  api_key: iamafreeuser
+type: Opaque
+---
 apiVersion: kuadrant.io/v1alpha1
 kind: LLMTokenRateLimitPolicy
 metadata:
@@ -86,9 +113,7 @@ spec:
       window: 1d
     predicate: 'request.auth.claims["kuadrant.io/groups"].split(",").exists(g, g == "free")' 
     counter: auth.identity.userid
-```
-
-```yaml
+---
 apiVersion: kuadrant.io/v1alpha1
 kind: LLMPromptRiskCheckPolicy
 metadata:
@@ -115,9 +140,7 @@ spec:
             "error": "Unauthorized",
             "message": "Request prompt blocked by content policy."
           }
-```
-
-```yaml
+---
 apiVersion: kuadrant.io/v1alpha1
 kind: LLMResponseRiskCheckPolicy
 metadata:
