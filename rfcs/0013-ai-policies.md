@@ -8,7 +8,7 @@
 # Summary
 [summary]: #summary
 
-AI workloads are becoming more and more prominent of late, and there is considerable traction in a number of related Gateway API projects to provide policies and tooling for managing these workloads, from the perspectives of both platform engineering and the app developer.
+AI workloads are becoming increasingly prominent, and there is significant momentum among several related Gateway API projects to provide policies and tooling for managing these workloads, from the perspectives of both platform engineering and the app developer.
 
 This RFC proposes three new Kuadrant APIs in the general AI Gateway realm:
 
@@ -21,33 +21,35 @@ This RFC proposes three new Kuadrant APIs in the general AI Gateway realm:
 
 Why are we doing this? What use cases does it support? What is the expected outcome?
 
-AI workloads are becoming extremely popular. Management of ingress with Gateway API and policies into running model servers is something our policies can augment and enhance.
-The aim is to augement, not replace, the [Gateway API Inference Extensions](https://gateway-api-inference-extension.sigs.k8s.io/) project.
+AI workloads are becoming extremely popular. Our policies can augment and enhance both the management of ingress traffic via the Gateway API and the routing to running model servers.
+The aim is to augment, not replace, the [Gateway API Inference Extensions](https://gateway-api-inference-extension.sigs.k8s.io/) project.
 
 Using the [Inference Platform Admin](https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/main/docs/proposals/002-api-proposal#inference-platform-admin) and [Inference Workload Owner](https://github.com/kubernetes-sigs/gateway-api-inference-extension/tree/main/docs/proposals/002-api-proposal#inference-workload-owner) personas, some high-level use-cases we hope to enable are:
 
-- As an Inference Platform Admin, I want to protect my LLM infrastrcture from being overwhelmed by limiting per user token usage across all models.
+- As an Inference Platform Admin, I want to protect my LLM infrastructure from being overwhelmed by limiting per user token usage across all models.
 - As an Inference Workload Owner, I want to apply token usage limits to specific models so that costs are controlled based on the heaviest GPU using models.
 - As an Inference Workload Owner, I want to apply different token usage limits to different user groups based on business requirements.
 - As an Inference Workload Owner, I want to guard my running model servers from risky prompts (input) with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b), and reject them before they are routed to (expensive) running models
-- As an Inference Workload Owner, I want guard against risky chat completion responses (output) with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b)
+- As an Inference Workload Owner, I want to guard against risky chat completion responses (output) with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b)
 - As an Inference Workload Owner, I want to apply guards against different risky content categories to different user groups based on business requirements.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-## `LLMTokenRateLimitPolicy`
+## New Policies
 
-A Kuadrant `LLMTokenRateLimitPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` & `HTTPRoute`) designed to allow users to define and enforce rate limiting rules to control token usage within OpenAI-style LLM provider APIs. It allows users to set and enforce token budget constraints for Gateways, but also for individual services exposed as HTTPRoutes. Per-user or per-group token rate limiting can be enforced based on JWT claims.
+### `LLMTokenRateLimitPolicy`
+
+A Kuadrant `LLMTokenRateLimitPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`) designed to allow users to define and enforce rate limiting rules to control token usage within OpenAI-style LLM provider APIs. It allows users to set and enforce token budget constraints for Gateways, but also for individual services exposed as HTTPRoutes. Per-user or per-group token rate limiting can be enforced based on JWT claims.
 
 
-## `LLMPromptRiskCheckPolicy`
+### `LLMPromptRiskCheckPolicy`
 
-A Kuadrant `LLMPromptRiskCheckPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` & `HTTPRoute`), enabling users to define and enforce content safety ruless with LLM prompts to detect and block sensitive prompts.  Prompt Guards can be defined and enforced for both Gateways and individual HTTPRoutes.
+A Kuadrant `LLMPromptRiskCheckPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM prompts to detect and block sensitive prompts.  Prompt guards can be defined and enforced for both Gateways and individual HTTPRoutes.
 
-## `LLMResponseRiskCheckPolicy`
+### `LLMResponseRiskCheckPolicy`
 
-A Kuadrant `LLMResponseRiskCheckPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` & `HTTPRoute`), enabling users to define and enforce content safety ruless with LLM content completion responses, to detect and block sensitive responses from LLMs. These can be defined and enforced for both Gateways and individual HTTPRoutes.
+A Kuadrant `LLMResponseRiskCheckPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM content completion responses, to detect and block sensitive responses from LLMs. These can be defined and enforced for both Gateways and individual HTTPRoutes.
 
 ## Concepts Introduced
 
