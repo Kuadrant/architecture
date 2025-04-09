@@ -161,6 +161,160 @@ This is the technical portion of the RFC. Explain the design in sufficient detai
 
 The section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
 
+
+## `LLMTokenRateLimitPolicy`
+
+- Add a new resource, `LLMTokenRateLimitPolicy`, to be managed by the Kuadrant operator.
+- Either:
+  - Extend our existing `wasm-shim` to optionally parse OpenAI-style (either [chat completion](https://platform.openai.com/docs/api-reference/chat/create) or [response](https://platform.openai.com/docs/api-reference/responses/create)) usage metrics from downstream model server responses and append these as well-known dynamic metadata, for use by Limitador
+  - OR:
+  - Create a new `ext_proc` gRPC service for parsing OpenAI-style and usage metrics and adding these as well-known dynamic metadata, for use by Limitador
+- Extend the wasm-chim and `RateLimitPolicy` to give a means to specify an increment (currently, [hard-coded](https://github.com/Kuadrant/wasm-shim/blob/main/src/service/rate_limit.rs#L18) to `1`)
+- Alter the wasm-shim's `actionSets` actions to inject (where appropriate) additional steps for both guards and token usage metrics parsing. The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed)
+- Look at ways to support a "two-phase" approach to rate-limiting: a standard, normal rate limit enforcement prior to hitting the model server (responding early if limited), and (if not limited) one after based on one to increment counters by a custom increment (after parsing usage metrics)
+
+A diagram:
+
+
+```mermaid
+flowchart TD
+    A["Incoming chat /completion request"] --> B["httproute"]
+    B --> C["envoy"]
+    C --> D["WASM - check rate limits"]
+    D --> E["EnvoyFilter (WASM/ext_proc) for token usage"]
+    E --> F["llm guardian for prompt risk checks via ext_proc/WASM (likely parallel to usage metrics?)"]
+    F --> G["downstream kserve model server call for inference"]
+    G --> H["EnvoyFilter (WASM/ext_proc): parse openai-style usage metrics from model server response"]
+    H-->I["call to limitador to increment by token usage count"]
+    I --> J["llm guardian for response risk checks via ext_proc/WASM"]
+    J --> K["flush completion"]
+```
+
+### Example `/completion` responses
+
+We want to support both complete and streamed (HTTP chunked) responses from downstream.
+
+[kServe HuggingFace model server](https://kserve.github.io/website/master/modelserving/v1beta1/llm/huggingface/text_generation/) completion response:
+
+```json
+{
+  // ...
+  "usage":{
+    "prompt_tokens":5,
+    "total_tokens":55,
+    "completion_tokens":50,
+    "prompt_tokens_details":null
+  },
+  //...
+}
+```
+
+OpenAI `/v1/chat/completions` [response](https://platform.openai.com/docs/api-reference/responses/create):
+
+Complete:
+```json
+{
+  // ..
+  "usage": {
+    "prompt_tokens": 19,
+    "completion_tokens": 10,
+    "total_tokens": 29,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "audio_tokens": 0
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "audio_tokens": 0,
+      "accepted_prediction_tokens": 0,
+      "rejected_prediction_tokens": 0
+    }
+  }
+  // ...
+}
+```
+
+Streamed (second-to-last chunk):
+```json
+{
+  "id": "chatcmpl-9M3...",
+  "choices": [],
+  "created": 1715044805,
+  "model": "gpt-3.5-turbo-0125",
+  "object": "chat.completion.chunk",
+  "system_fingerprint": null,
+  "usage": {
+    "completion_tokens": 11,
+    "prompt_tokens": 29,
+    "total_tokens": 40
+  }
+}
+{
+  "id": "chatcmpl-9M3...",
+  "choices": [
+    {
+      "delta": {
+        "content": null,
+        "function_call": null,
+        "role": null,
+        "tool_calls": null
+      },
+      "finish_reason": "stop",
+      "index": 0,
+      "logprobs": null
+    }
+  ],
+  "created": 1715044805,
+  "model": "gpt-3.5-turbo-0125",
+  "object": "chat.completion.chunk",
+  "system_fingerprint": null,
+  "usage": null
+}
+```
+
+Streamed:
+
+Ref: https://community.openai.com/t/usage-stats-now-available-when-using-streaming-with-the-chat-completions-api-or-completions-api/738156
+
+OpenAI `/v1/responses` [response](https://platform.openai.com/docs/api-reference/chat/create):
+
+Complete:
+```json
+{
+  // ..
+ "usage": {
+    "input_tokens": 36,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens": 87,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    },
+    "total_tokens": 123
+  },
+  // ...
+}
+```
+
+Streamed:
+
+```json
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_67c9fdcecf488190bdd9a0409de3a1ec07b8b0ad4e5eb654","object":"response","created_at":1741290958,"status":"completed","error":null,"incomplete_details":null,"instructions":"You are a helpful assistant.","max_output_tokens":null,"model":"gpt-4o-2024-08-06","output":[{"id":"msg_67c9fdcf37fc8190ba82116e33fb28c507b8b0ad4e5eb654","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"Hi there! How can I assist you today?","annotations":[]}]}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"generate_summary":null},"store":true,"temperature":1.0,"text":{"format":{"type":"text"}},"tool_choice":"auto","tools":[],"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":37,"output_tokens":11,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":48},"user":null,"metadata":{}}}
+```
+
+```json
+{
+  // ...
+  "usage":{"input_tokens":37,"output_tokens":11,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":48}
+  // ...
+}
+```
+
+
+
+
 # Drawbacks
 [drawbacks]: #drawbacks
 
