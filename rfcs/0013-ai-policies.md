@@ -82,8 +82,8 @@ spec:
     name: my-llm-gateway
   limit:
     rate:
-      limit: 4
-      window: 10s
+      limit: 20000
+      window: 1d
     predicate: 'request.auth.claims["kuadrant.io/groups"].split(",").exists(g, g == "free")' 
     counter: auth.identity.userid
 ```
