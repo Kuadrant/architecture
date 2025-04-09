@@ -59,13 +59,16 @@ A Kuadrant `LLMResponseRiskCheckPolicy` is a custom resource provided by Kuadran
 
 ## Example Use Case
 
-Say you're serving a chat LLM behind a Gateway. You want:
+
+Say you're serving a chat LLM behind a Gateway, which implements an OpenAI-style chat `/completion` API. You want:
 
 - Free-tier users limited to 20k tokens/day.
 - Guardrails to reject prompts asking for harmful, violent or sexual content.
 - Output filtering to block generally harmful completions.
 
 You’d define the following policies:
+
+> Notes (somewhere): OpenAI-style usage metrics in responses required: `"usage":{"prompt_tokens":5,"total_tokens":15,"completion_tokens":10}`
 
 ```yaml
 apiVersion: kuadrant.io/v1alpha1
