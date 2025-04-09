@@ -166,11 +166,10 @@ The section should return to the examples given in the previous section, and exp
 
 - Add a new resource, `LLMTokenRateLimitPolicy`, to be managed by the Kuadrant operator.
 - Either:
-  - Extend our existing `wasm-shim` to optionally parse OpenAI-style (either [chat completion](https://platform.openai.com/docs/api-reference/chat/create) or [response](https://platform.openai.com/docs/api-reference/responses/create)) usage metrics from downstream model server responses and append these as well-known dynamic metadata, for use by Limitador
-  - OR:
+  - Extend our existing `wasm-shim` to optionally amend the existing `actionSet` to optionally call both the guard filter and the token parsing filter implementation.
   - Create a new `ext_proc` gRPC service for parsing OpenAI-style and usage metrics and adding these as well-known dynamic metadata, for use by Limitador
 - Extend the wasm-chim and `RateLimitPolicy` to give a means to specify an increment (currently, [hard-coded](https://github.com/Kuadrant/wasm-shim/blob/main/src/service/rate_limit.rs#L18) to `1`)
-- Alter the wasm-shim's `actionSets` actions to inject (where appropriate) additional steps for both guards and token usage metrics parsing. The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our"internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719
+- Alter the wasm-shim's `actionSets` actions to inject (where appropriate) additional steps for both guards and token usage metrics parsing. The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our"internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
 - Look at ways to support a "two-phase" approach to rate-limiting: a standard, normal rate limit enforcement prior to hitting the model server (responding early if limited), and (if not limited) one after based on one to increment counters by a custom increment (after parsing usage metrics)
 
 A diagram:
@@ -180,13 +179,13 @@ A diagram:
 flowchart TD
     A["Incoming chat /completion request"] --> B["httproute"]
     B --> C["envoy"]
-    C --> D["WASM - check rate limits"]
-    D --> E["EnvoyFilter (WASM/ext_proc) for token usage"]
-    E --> F["llm guardian for prompt risk checks via ext_proc/WASM (likely parallel to usage metrics?)"]
+    C --> D["wasm-shim -> Limitador -> check rate limits"]
+    D --> E["EnvoyFilter (ext_proc) for token usage"]
+    E --> F["llm guardian for prompt risk checks via ext_proc (likely parallel to usage metrics?)"]
     F --> G["downstream kserve model server call for inference"]
-    G --> H["EnvoyFilter (WASM/ext_proc): parse openai-style usage metrics from model server response"]
+    G --> H["EnvoyFilter (ext_proc): parse openai-style usage metrics from model server response"]
     H-->I["call to limitador to increment by token usage count"]
-    I --> J["llm guardian for response risk checks via ext_proc/WASM"]
+    I --> J["llm guardian for response risk checks via ext_proc"]
     J --> K["flush completion"]
 ```
 
