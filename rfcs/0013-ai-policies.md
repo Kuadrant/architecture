@@ -170,7 +170,7 @@ The section should return to the examples given in the previous section, and exp
   - OR:
   - Create a new `ext_proc` gRPC service for parsing OpenAI-style and usage metrics and adding these as well-known dynamic metadata, for use by Limitador
 - Extend the wasm-chim and `RateLimitPolicy` to give a means to specify an increment (currently, [hard-coded](https://github.com/Kuadrant/wasm-shim/blob/main/src/service/rate_limit.rs#L18) to `1`)
-- Alter the wasm-shim's `actionSets` actions to inject (where appropriate) additional steps for both guards and token usage metrics parsing. The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed)
+- Alter the wasm-shim's `actionSets` actions to inject (where appropriate) additional steps for both guards and token usage metrics parsing. The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our"internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719
 - Look at ways to support a "two-phase" approach to rate-limiting: a standard, normal rate limit enforcement prior to hitting the model server (responding early if limited), and (if not limited) one after based on one to increment counters by a custom increment (after parsing usage metrics)
 
 A diagram:
