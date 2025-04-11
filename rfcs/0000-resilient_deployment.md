@@ -2,7 +2,7 @@
 
 - Feature Name: Resilient Deployment
 - Start Date: 2025-04-07
-- RFC PR: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/pull/0000)
+- RFC PR: [Kuadrant/architecture#119](https://github.com/Kuadrant/architecture/pull/119)
 - Issue tracking: [Kuadrant/architecture#117](https://github.com/Kuadrant/architecture/issues/117)
 
 # Summary
@@ -132,6 +132,152 @@ How this is reflected in the status of the Kuadrant CR is unknown currently.
 <!-- - Corner cases are dissected by example. -->
 <!---->
 <!-- The section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work. -->
+Give the spec as below these are the steps that would be required.
+```yaml
+apiVersion: kuadrant.io/v1beta1
+kind: Kuadrant
+spec:
+  resilience:
+    authorization: True
+    rateLimiting: True
+    counterStorage: {} # lifts storage struct from the limitador CR.
+```
+
+## spec.resilience.authorization
+For `spec.resilience.authorization` we can make use of some features within the authorino CR, but will require updating to the authorino deployment and creation of PodDiruptionBudget CR.
+
+The authorino CR allows the setting of replicas `spec.replicas`.
+This should be set to 2. 
+The user should have the power to modify this number to what they want.
+If the number is less than the minimum we recommend (2), the kuadrant CR should report an error in the status.
+If the user uses a number greater than what we recommend, the kuadrant CR should report an information status.
+```yaml
+kind: Authorino
+metadata:
+  name: authorino
+spec:
+  replicas: 2
+```
+
+The deployment for authorino needs to be modified in the following was.
+`resources.requests` and `topologySpreadConstraints` need to be added.
+The kuadrant status is easier to manage with the `resources.requests` as it can be less than what is recommended.
+Values for the `resources.requests` need to be discovered. 
+The `topologySpreadConstraints` on the other hand is not as easy to state if it is out of spec in a good way (higher spec) or a bad way (lesser spec).
+Still the status in the kuadrant CR needs to reflect these resources being out of spec.
+```yaml
+kind: Deployment
+metadata:
+  name: authorino
+spec:
+  template:
+    spec:
+      containers:
+        - name: authorino
+          resources:
+            requests:
+              cpu: 10m
+              memory: 10Mi
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              authorino-resource: authorino
+        - maxSkew: 1
+          topologyKey: kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              authorino-resource: authorino
+```
+
+The PodDisruptionBudget is the next resource that needs to be created.
+As this is a resource that is none existent in a normal deployment of kuadrant.
+The kuadrant-operator will be required to take ownership of the resource.
+```yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: authorino
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      authorino-resource: authorino
+```
+
+
+## spec.resilience.rateLimiting
+For `spec.resilience.rateLimiting` we can make use of most features within the limitador CR, but will be requiring modifying the limitador deployment for the `topologySpreadConstraints`.
+
+The limitador CR allows the setting of the `pdb`(PodDisruptionBudget), `resourceRequirements.requests`, and `replicas`.
+These resources follow the same user updating feature.
+When the feature is active the status of each section should be reported to when out of spec.
+```yaml
+apiVersion: limitador.kuadrant.io/v1alpha1
+kind: Limitador
+metadata:
+  name: limitador
+spec:
+  pdb:
+    maxUnavailable: 1
+  replicas: 2
+  resourceRequirements:
+    requests:
+      cpu: 10m
+      memory: 10Mi
+```
+
+The `topologySpreadCondtraints` needs to be configured with in the limitador deployment CR.
+```yaml
+# patches (merge) the limitador-operator owned Deployment with this partial resource
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: limitador-limitador
+spec:
+  template:
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              limitador-resource: limitador
+        - maxSkew: 1
+          topologyKey: kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              limitador-resource: limitador
+```
+
+Limitador does require persisted storage.
+This can be configured in the limitador CR under `spec.storage`.
+If this section is missing from the limitador CR, and the `spec.resilience.rateLimiting`, the kuadrant CR needs to raise a warning in the status.
+The status is only a warning as it could be possible the user wants in memory counters.
+
+## spec.resilience.counterStorage
+For `spec.resilience.counterStorage` the configuration will be added to the limitador CR under the `spec.storage` section.
+
+In the kuadrant CR this will be an object that matches the structure of the limitador [spec.storage](https://github.com/Kuadrant/limitador-operator/blob/626341d2aff5f6b8028317dc0e7d1bb27eb8d3d4/api/v1alpha1/limitador_types.go#L203-L212).
+Unlike the other resilience features, once configured the kuadrant-operator need to maintain the configuration within the limitador CR. 
+
+This will introduce an upgrade issue.
+If the user has configured the storage option with in the limitador CR prior to this feature added, their configuration will be removed.
+
+## Kuadrant CR Status
+The kuadrant CR Status block will be used to tell the user the state of the different features that have being enabled.
+Each feature can raise warnings and errors independent of each other.
+
+## doc.kuadrant.io guides
+On [docs.kuadrant.io](https://docs.kuadrant.io) there will be a section that describes the features of `spec.resilience`.
+This will show examples of the configuration that each feature will configure, explain how to modify the configuration.
+
+What happens when the feature is disabled will be outlined, so the user can make an informed decision when disabling the feature.
 
 # Drawbacks
 [drawbacks]: #drawbacks
@@ -159,6 +305,15 @@ How this is reflected in the status of the Kuadrant CR is unknown currently.
 <!---->
 <!-- Note that while precedent set by other projects is some motivation, it does not on its own motivate an RFC. -->
 
+There has being some exploring work done, and guides to show a user how to set this up.
+- [github.com/kuadrant/deployment](https://github.com/kuadrant/deployment)
+- [Resilient Deployment of data plane compnents (docs guide)](https://docs.kuadrant.io/dev/install-olm/#resilient-deployment-of-data-plane-components)
+
+There are a number of other RFCs releating to the intruduction of features into the kuadrant CR.
+- [RFC: Observability API](https://github.com/Kuadrant/architecture/pull/97)
+- [RFC for mTLS](https://github.com/Kuadrant/architecture/pull/110)
+- [RFC: Standardize the Kuadrant Spec](https://github.com/Kuadrant/architecture/pull/112)
+
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
@@ -171,6 +326,8 @@ While the simple answer would be yes, there is the issue of a configuration bein
 
 While the kuadrant-operator will not take ownership of existing configuration.
 What the sub operators would do is unknown at this stage if the feature is enabled via their CRs.
+
+How to many counterStorage configuration on upgrades? More so how to many existing storage configurations when this feature is introduced?
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
