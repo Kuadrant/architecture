@@ -1,7 +1,7 @@
 # AI Policies
 
 - Feature Name: `ai_policies`
-- Start Date: (fill me in with today's date, YYYY-MM-DD)
+- Start Date: 2025-04-08
 - RFC PR: [Kuadrant/architecture#120](https://github.com/Kuadrant/architecture/pull/120)
 - Issue tracking: [Kuadrant/architecture#118](https://github.com/Kuadrant/architecture/issues/118)
 
