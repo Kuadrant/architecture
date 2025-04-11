@@ -1,9 +1,9 @@
-# RFC Template
+# AI Policies
 
 - Feature Name: `ai_policies`
 - Start Date: (fill me in with today's date, YYYY-MM-DD)
-- RFC PR: [Kuadrant/architecture#0013](https://github.com/Kuadrant/architecture/pull/0000)
-- Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
+- RFC PR: [Kuadrant/architecture#120](https://github.com/Kuadrant/architecture/pull/120)
+- Issue tracking: [Kuadrant/architecture#118](https://github.com/Kuadrant/architecture/issues/118)
 
 # Summary
 [summary]: #summary
