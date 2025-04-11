@@ -200,17 +200,69 @@ A diagram:
 
 
 ```mermaid
-flowchart TD
-    A["Incoming chat /completion request"] --> B["httproute"]
-    B --> C["envoy"]
-    C --> D["wasm-shim -> Limitador -> check rate limits"]
-    D --> E["EnvoyFilter (ext_proc) for token usage"]
-    E --> F["llm guardian for prompt risk checks via ext_proc (likely parallel to usage metrics?)"]
-    F --> G["downstream model server call for inference"]
-    G --> H["EnvoyFilter (ext_proc): parse openai-style usage metrics from model server response"]
-    H-->I["call to limitador to increment by token usage count"]
-    I --> J["llm guardian for response risk checks via ext_proc"]
-    J --> K["flush completion response"]
+sequenceDiagram
+  participant C as Client
+  participant HR as HTTP Route
+  participant E as Envoy Proxy
+  participant WL as WASM/EnvoyFilter (Rate Limit & Token Usage)
+  participant L as Limitador
+  participant PG as LLM Prompt Guardian
+  participant MS as KServe Model Server
+  participant RPM as Response Processor (Usage Metrics Parser)
+  participant RG as LLM Response Guardian
+
+  %% initial req
+  C->>HR: Incoming chat/completion request
+  HR->>E: Forward request
+
+  %% pre-model-server token rate limiting check
+  E->>WL: Check rate limits & token usage
+  WL->>L: Check if limits reached
+  alt Limit not reached
+    L-->>WL: Rate limit OK
+  else Limit reached
+    L-->>WL: Rate limit exceeded
+    WL->>E: Return rate limit exceeded response (Error Response)
+    note right of WL: Processing stops here for rate limit error
+  end
+
+  %% prompt risk check
+  WL->>PG: Initiate prompt risk check
+  alt Prompt Risk Check Passed
+    PG-->>WL: Risk check OK
+  else Prompt risk failed
+    PG-->>WL: Risk check failed
+    WL->>E: Return prompt guard error response (Error Response)
+    note right of WL: Processing stops here for prompt risk error
+  end
+
+  %% forward request for inference if no early errors above
+  WL->>MS: Forward request for inference
+  MS-->>WL: Return model response with usage metrics
+
+  %% process response: parse usage metrics from model response
+  WL->>RPM: Parse usage metrics
+
+  %% update token usage count via Limitador
+  RPM->>L: Increment token usage count via limitador
+  L-->>RPM: Acknowledge token count update
+
+  %% response risk check
+  RPM->>RG: Initiate response risk check
+  alt Response Risk Check Passed
+    RG-->>RPM: Risk check OK
+  else Response risk check failed
+    RG-->>RPM: Risk check failed
+    RPM->>WL: Signal response risk error
+    WL->>E: Return LLM response risk error response (Error Response)
+    note right of WL: Processing stops here for response risk error
+  end
+
+  %% final inference response: deliver back to client
+  RPM-->>WL: Return modified response
+  WL->>E: Forward final response
+  E->>HR: Pass response for flush
+  HR->>C: Deliver final LLM response
 ```
 
 ### Parsing OpenAI-style usage metrics
