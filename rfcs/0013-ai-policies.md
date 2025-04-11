@@ -196,8 +196,12 @@ The section should return to the examples given in the previous section, and exp
 - Alter the wasm-shim's `actionSets` actions to inject (where appropriate) additional steps for both guards and token usage metrics parsing. The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our"internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
 - Look at ways to support a "two-phase" approach to rate-limiting: a standard, normal rate limit enforcement prior to hitting the model server (responding early if limited), and (if not limited) one after based on one to increment counters by a custom increment (after parsing usage metrics)
 
-A diagram:
+### Sequence Diagrams
 
+Below are some sequence diagrams that attempt to capture some of these flows and interactions at a high level.
+
+
+#### Sequence Diagram: Token rate limiting
 
 ```mermaid
 sequenceDiagram
@@ -206,10 +210,8 @@ sequenceDiagram
   participant E as Envoy Proxy
   participant WL as WASM/EnvoyFilter (Rate Limit & Token Usage)
   participant L as Limitador
-  participant PG as LLM Prompt Guardian
   participant MS as KServe Model Server
   participant RPM as Response Processor (Usage Metrics Parser)
-  participant RG as LLM Response Guardian
 
   %% initial req
   C->>HR: Incoming chat/completion request
@@ -226,6 +228,41 @@ sequenceDiagram
     note right of WL: Processing stops here for rate limit error
   end
 
+  %% forward request for inference if no early errors above
+  WL->>MS: Forward request for inference
+  MS-->>WL: Return model response with usage metrics
+
+  %% process response: parse usage metrics from model response
+  WL->>RPM: Parse usage metrics
+
+  %% update token usage count via Limitador
+  RPM->>L: Increment token usage count via limitador
+  L-->>RPM: Acknowledge token count update
+
+  %% final inference response: deliver back to client
+  RPM-->>WL: Return modified response
+  WL->>E: Forward final response
+  E->>HR: Pass response for flush
+  HR->>C: Deliver final LLM response
+```
+
+
+#### Sequence Diagram: Prompt and Completion Response Guarding
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant HR as HTTP Route
+  participant E as Envoy Proxy
+  participant WL as WASM/EnvoyFilter (Guard Processor)
+  participant PG as LLM Prompt Guardian
+  participant MS as KServe Model Server
+  participant RG as LLM Response Guardian
+
+  %% initial req
+  C->>HR: Incoming chat/completion request
+  HR->>E: Forward request
+
   %% prompt risk check
   WL->>PG: Initiate prompt risk check
   alt Prompt Risk Check Passed
@@ -238,28 +275,19 @@ sequenceDiagram
 
   %% forward request for inference if no early errors above
   WL->>MS: Forward request for inference
-  MS-->>WL: Return model response with usage metrics
-
-  %% process response: parse usage metrics from model response
-  WL->>RPM: Parse usage metrics
-
-  %% update token usage count via Limitador
-  RPM->>L: Increment token usage count via limitador
-  L-->>RPM: Acknowledge token count update
+  MS-->>WL: Return model response
 
   %% response risk check
-  RPM->>RG: Initiate response risk check
+  WL->>RG: Initiate response risk check
   alt Response Risk Check Passed
-    RG-->>RPM: Risk check OK
+    RG-->>WL: Risk check OK
   else Response risk check failed
-    RG-->>RPM: Risk check failed
-    RPM->>WL: Signal response risk error
+    RG-->>WL: Risk check failed
     WL->>E: Return LLM response risk error response (Error Response)
     note right of WL: Processing stops here for response risk error
   end
 
   %% final inference response: deliver back to client
-  RPM-->>WL: Return modified response
   WL->>E: Forward final response
   E->>HR: Pass response for flush
   HR->>C: Deliver final LLM response
