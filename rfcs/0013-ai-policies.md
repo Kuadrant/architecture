@@ -201,13 +201,14 @@ The section should return to the examples given in the previous section, and exp
 Below are some sequence diagrams that attempt to capture some of these flows and interactions at a high level.
 
 
-#### Sequence Diagram: Token rate limiting
+#### Sequence Diagram: Token rate limiting and auth
 
 ```mermaid
 sequenceDiagram
   participant C as Client
   participant HR as HTTP Route
   participant E as Envoy Proxy
+  participant A as Authorino
   participant WL as WASM/EnvoyFilter (Rate Limit & Token Usage)
   participant L as Limitador
   participant MS as KServe Model Server
@@ -216,6 +217,16 @@ sequenceDiagram
   %% initial req
   C->>HR: Incoming chat/completion request
   HR->>E: Forward request
+
+  %% JWT authentication check via Authorino
+  E->>A: Validate JWT token & group access
+  alt Auth success
+    A-->>E: Auth valid
+  else Auth fail
+    A-->>E: Auth failed
+    E->>HR: Return authentication error response (Error Response)
+    note right of E: processing stops here for auth error
+  end
 
   %% pre-model-server token rate limiting check
   E->>WL: Check rate limits & token usage
@@ -244,6 +255,7 @@ sequenceDiagram
   WL->>E: Forward final response
   E->>HR: Pass response for flush
   HR->>C: Deliver final LLM response
+
 ```
 
 
