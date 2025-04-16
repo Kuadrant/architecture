@@ -94,3 +94,11 @@ Gateway:
 ```
 
 A local record is set up for `k.example.com.kdrnt`. It is this domain that is requested from the DNS Operator instances. Effectively each DNS Operator queries each nameserver it has been configured with via the DNSProvider secret something equivilant to `dig @nameserver k.example.com.kdrnt`. The response from each nameserver is then merged into a single `k.example.com` DNSRecord and served via the CoreDNS plugin. This means each Core DNS instance can serve a valid response for a query for `k.example.com`.
+
+### Future Options
+
+This design is what we went with for the initial PoC. Since then we have identified some additional areas we want to look into.
+
+#### Zone Transfer via Core DNS
+
+Currently we use DNS queries against each authoritative nameserver itself to discover what records each nameserver has, however we also want to look into potentially using the [zone transfer protocol and plugin from core-dns](https://coredns.io/plugins/transfer/). One potential drawback of this is the need to do this via TCP and the need for us to protect that endpoint in some form.
