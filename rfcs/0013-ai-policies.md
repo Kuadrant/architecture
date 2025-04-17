@@ -207,36 +207,34 @@ Below are some sequence diagrams that attempt to capture some of these flows and
 sequenceDiagram
   participant C as Client
   participant HR as HTTP Route
-  participant E as Envoy Proxy
+  participant WL as WASM/EnvoyFilter in Envoy (Rate Limit & Token Usage)
   participant A as Authorino
-  participant WL as WASM/EnvoyFilter (Rate Limit & Token Usage)
   participant L as Limitador
   participant MS as KServe Model Server
   participant RPM as Response Processor (Usage Metrics Parser)
 
   %% initial req
   C->>HR: Incoming chat/completion request
-  HR->>E: Forward request
+  HR->>WL: Forward request
 
   %% JWT authentication check via Authorino
-  E->>A: Validate JWT token & group access
+  WL->>A: Validate JWT token & group access
   alt Auth success
-    A-->>E: Auth valid
+    A-->>WL: Auth valid
   else Auth fail
-    A-->>E: Auth failed
-    E->>HR: Return authentication error response (Error Response)
-    note right of E: processing stops here for auth error
+    A-->>WL: Auth failed
+    WL->>HR: Return authentication error response (Error Response)
+    note right of WL: processing stops here for auth error
   end
 
   %% pre-model-server token rate limiting check
-  E->>WL: Check rate limits & token usage
   WL->>L: Check if limits reached
   alt Limit not reached
     L-->>WL: Rate limit OK
   else Limit reached
     L-->>WL: Rate limit exceeded
-    WL->>E: Return rate limit exceeded response (Error Response)
-    note right of WL: Processing stops here for rate limit error
+    WL->>HR: Return rate limit exceeded response (Error Response)
+    note right of WL: processing stops here for rate limit error
   end
 
   %% forward request for inference if no early errors above
@@ -252,8 +250,7 @@ sequenceDiagram
 
   %% final inference response: deliver back to client
   RPM-->>WL: Return modified response
-  WL->>E: Forward final response
-  E->>HR: Pass response for flush
+  WL->>HR: Pass response for flush
   HR->>C: Deliver final LLM response
 
 ```
@@ -265,15 +262,14 @@ sequenceDiagram
 sequenceDiagram
   participant C as Client
   participant HR as HTTP Route
-  participant E as Envoy Proxy
-  participant WL as WASM/EnvoyFilter (Guard Processor)
+  participant WL as WASM/EnvoyFilter in Envoy (Guard Processor)
   participant PG as LLM Prompt Guardian
   participant MS as KServe Model Server
   participant RG as LLM Response Guardian
 
   %% initial req
   C->>HR: Incoming chat/completion request
-  HR->>E: Forward request
+  HR->>WL: Forward request
 
   %% prompt risk check
   WL->>PG: Initiate prompt risk check
@@ -281,7 +277,7 @@ sequenceDiagram
     PG-->>WL: Risk check OK
   else Prompt risk failed
     PG-->>WL: Risk check failed
-    WL->>E: Return prompt guard error response (Error Response)
+    WL->>HR: Return prompt guard error response (Error Response)
     note right of WL: Processing stops here for prompt risk error
   end
 
@@ -295,13 +291,12 @@ sequenceDiagram
     RG-->>WL: Risk check OK
   else Response risk check failed
     RG-->>WL: Risk check failed
-    WL->>E: Return LLM response risk error response (Error Response)
+    WL->>HR: Return LLM response risk error response (Error Response)
     note right of WL: Processing stops here for response risk error
   end
 
   %% final inference response: deliver back to client
-  WL->>E: Forward final response
-  E->>HR: Pass response for flush
+  WL->>HR: Forward final response
   HR->>C: Deliver final LLM response
 ```
 
