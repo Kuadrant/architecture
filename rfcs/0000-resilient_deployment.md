@@ -19,6 +19,7 @@ This includes deploying multiply replicas of the data plane components, Authorin
 In the case of Limitador, this also includes being able to persist counters.
 
 As Kuadrant we want to provide a user experience that makes deploying a more resilient product possible.
+Kuadrant will provide an opinionated data plane configuration based on our understanding of the components within kuadrant, and common topology setups.
 
 
 # Guide-level explanation
@@ -41,7 +42,7 @@ For the deployments there are a number of configurations required.
 - PodDisruptionBudget
 - Resource Limits
 - Replicas
-With Authoring and Limitador there are different ways of configuring some of the features.
+With Authorino and Limitador there are different ways of configuring some of the features.
 
 The counters in Limitador can be persisted with external storage.
 - [Counter storages](https://github.com/Kuadrant/limitador/blob/main/doc/server/configuration.md#counter-storages)
@@ -49,7 +50,7 @@ The counters in Limitador can be persisted with external storage.
 
 Configuration of the feature will be done in the Kuadrant CR.
 This is to make it simpler for the user.
-**API Design (WIP)**
+**API Design**
 ```yaml
 apiVersion: kuadrant.io/v1beta1
 kind: Kuadrant
@@ -78,20 +79,21 @@ There are a number of uses that needs to be covered in the first iteration of th
 This is by far the simplest configuration.
 By default, the all resilience configuration will be blank.
 Thus, the feature will be disabled.
-One reason for this choice is area the counter storage requiring configuration.
+Counter storage configuration requires external resources, it is not possible for kuadrant to prepopulate the configuration. 
+This means the operator can not enable the resilience for limitador by default.
 
 ### Existing installations with zero custom configuration
 This act very much like a new installation. 
 The resilience configuration will be blank, thus, the feature is disabled.
 
-Once the feature is enabled the all the relevant resources will be created, with the kuadrant-operator having ownership where possible.
+Once the feature is enabled the all relevant resources will be created, with the kuadrant-operator having ownership where possible.
 
 ### Existing installations with custom configuration
 In the case the installation has custom configuration nothing changes till the users defines the resilience feature in the Kuadrant CR.
 
-Once the user configures the resilience feature the kuadrant-operator will create any missing configurations, and take ownership of those configurations.
+Once the user configures the resilience feature, the kuadrant-operator will create any missing configuration, and take ownership of them.
 The kuadrant-operator will not modify, extend, update, or take ownership of any existing configuration[^1].
-However, the status will reflect there is configuration that the kuadrant-operator doesn't owner, or there is configuration outside what the kuadrant-operator expects.
+However, the status will reflect there is configuration that the kuadrant-operator doesn't own, or there is configuration outside what the kuadrant-operator expects.
 
 [^1]: This true for any resource that is not already managed by the kuadrant-operator. 
 
@@ -104,16 +106,20 @@ This needs to be called out very clearly in the documentation.
 Why we do this is to simplify the reconciliation of configuration.
 
 ### SRE reaction events
-From time to time SRE teams would need to change configurations for other to address issues.
+From time to time SRE teams may need to change some configurations to address specific issues.
 We should allow the user configure the deployment to a state that is we regard as not resilient.
-The one example that comes to mind is scaling replicas to zero for address some issue.
-The user should be allowed to that, but the Kuadrant CR should state the configuration is below expected spec.
+The one example that comes to mind is scaling replicas to zero to address some issue.
+The user should be allowed to do that, but the Kuadrant CR should state the configuration is below expected spec.
 The below spec would be regarded as an error.
 
 ### The user wants more
 The user knows more about their deployment than we ever can.
 We need to allow the user to modify the configuration to suit their needs.
 When a user modifies the configuration, the kuadrant-operator should not reconcile back the changes.
+
+However, this is only true for configuration within a resource.
+If the user removes the resource CR completely the kuadrant-operator should recreate that resource.
+When the kuadrant-operator recreates the resource, the operator will use the default value of the base configuration, and not try to recreate the resource with any previous configuration the user may have added to the resource.
 
 If the user changes are below the minimum spec that we state, this should be reflected in the status.
 If the user changes the configuration at all it should be reflected in the status. 
@@ -159,7 +165,7 @@ spec:
   replicas: 2
 ```
 
-The deployment for authorino needs to be modified in the following was.
+The deployment for authorino needs to be modified in the following ways.
 `resources.requests` and `topologySpreadConstraints` need to be added.
 The kuadrant status is easier to manage with the `resources.requests` as it can be less than what is recommended.
 Values for the `resources.requests` need to be discovered. 
@@ -210,7 +216,7 @@ spec:
 
 
 ## spec.resilience.rateLimiting
-For `spec.resilience.rateLimiting` we can make use of most features within the limitador CR, but will be requiring modifying the limitador deployment for the `topologySpreadConstraints`.
+For `spec.resilience.rateLimiting` we can make use of most features within the limitador CR, but it will be required to modify the limitador deployment for the `topologySpreadConstraints`.
 
 The limitador CR allows the setting of the `pdb`(PodDisruptionBudget), `resourceRequirements.requests`, and `replicas`.
 These resources follow the same user updating feature.
