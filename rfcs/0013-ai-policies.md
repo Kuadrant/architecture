@@ -12,8 +12,8 @@ AI workloads are becoming increasingly prominent, and there is significant momen
 
 This RFC proposes three new Kuadrant APIs in the general AI Gateway realm:
 
-- `LLMTokenRateLimitPolicy` (alts: `TokenRateLimitPolicy`)
-- `LLMPromptRiskCheckPolicy` (alts: `PromptGuardPolicy`, `PromptSafetyPolicy`, `PromptFilterPolicy`)
+- `TokenRateLimitPolicy` (alts: `TokenRateLimitPolicy`)
+- `PromptGuardPolicy` (alts: `PromptSafetyPolicy`, `PromptFilterPolicy`)
 - `LLMResponseRiskCheckPolicy` (alts: `CompletionGuardPolicy`, `CompletionSafetyPolicy`)
 
 # Motivation
@@ -38,14 +38,14 @@ Using the [Inference Platform Admin](https://github.com/kubernetes-sigs/gateway-
 
 ## New Policies
 
-### `LLMTokenRateLimitPolicy`
+### `TokenRateLimitPolicy`
 
-A Kuadrant `LLMTokenRateLimitPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`) designed to allow users to define and enforce rate limiting rules to control token usage within OpenAI-style LLM provider APIs. It allows users to set and enforce token budget constraints for Gateways, but also for individual services exposed as HTTPRoutes. Per-user or per-group token rate limiting can be enforced based on JWT claims.
+A Kuadrant `TokenRateLimitPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`) designed to allow users to define and enforce rate limiting rules to control token usage within OpenAI-style LLM provider APIs. It allows users to set and enforce token budget constraints for Gateways, but also for individual services exposed as HTTPRoutes. Per-user or per-group token rate limiting can be enforced based on JWT claims.
 
 
-### `LLMPromptRiskCheckPolicy`
+### `PromptGuardPolicy`
 
-A Kuadrant `LLMPromptRiskCheckPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM prompts to detect and block sensitive prompts.  Prompt guards can be defined and enforced for both Gateways and individual HTTPRoutes.
+A Kuadrant `PromptGuardPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM prompts to detect and block sensitive prompts.  Prompt guards can be defined and enforced for both Gateways and individual HTTPRoutes.
 
 ### `LLMResponseRiskCheckPolicy`
 
@@ -100,7 +100,7 @@ stringData:
 type: Opaque
 ---
 apiVersion: kuadrant.io/v1alpha1
-kind: LLMTokenRateLimitPolicy
+kind: TokenRateLimitPolicy
 metadata:
   name: token-limit-free
 spec:
@@ -116,7 +116,7 @@ spec:
     counter: auth.identity.userid
 ---
 apiVersion: kuadrant.io/v1alpha1
-kind: LLMPromptRiskCheckPolicy
+kind: PromptGuardPolicy
 metadata:
   name: prompt-check
 spec:
@@ -176,30 +176,28 @@ spec:
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-This is the technical portion of the RFC. Explain the design in sufficient detail that:
+## TokenRateLimitPolicy
 
-- Its interaction with other features is clear.
-- It is reasonably clear how the feature would be implemented.
-- How error would be reported to the users.
-- Corner cases are dissected by example.
+- Add a new resource, `TokenRateLimitPolicy`, to be managed by the Kuadrant operator.
+- Extend the `wasm-shim` to:
+  - Add a new `action` to the `actionSet` types to execute the token rate limiting logic on the request and response.
+  - Implement the rate limit checking logic as the request body is processed. The request body has to be parsed to know which model is being targeted.
+    - Initial descriptors would include the request path, user id (if available) and the requested model.
+  - Implement the token parsing logic and counter increment as the response body is processed
+  - Give a means to specify a counter increment amount (currently, [hard-coded](https://github.com/Kuadrant/wasm-shim/blob/main/src/service/rate_limit.rs#L18) to `1`)
+- The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our"internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
+- Look at ways to avoid 2 requests to limitador per single request to a model. This is not ideal to have a limit check and counter increment happen separately due to scaling concerns. However, this approach is sufficient for an initial implementation.
 
-The section should return to the examples given in the previous section, and explain more fully how the detailed proposal makes those examples work.
+## PromptGuardPolicy
 
-
-## `LLMTokenRateLimitPolicy`
-
-- Add a new resource, `LLMTokenRateLimitPolicy`, to be managed by the Kuadrant operator.
-- Either:
-  - Extend our existing `wasm-shim` to optionally amend the existing `actionSet` to optionally call both the guard filter and the token parsing filter implementation.
-  - Create a new `ext_proc` gRPC service for parsing OpenAI-style and usage metrics and adding these as well-known dynamic metadata, for use by Limitador
-- Extend the wasm-shim and `RateLimitPolicy` to give a means to specify an increment (currently, [hard-coded](https://github.com/Kuadrant/wasm-shim/blob/main/src/service/rate_limit.rs#L18) to `1`)
-- Alter the wasm-shim's `actionSets` actions to inject (where appropriate) additional steps for both guards and token usage metrics parsing. The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our"internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
-- Look at ways to support a "two-phase" approach to rate-limiting: a standard, normal rate limit enforcement prior to hitting the model server (responding early if limited), and (if not limited) one after based on one to increment counters by a custom increment (after parsing usage metrics)
+- Add a new resource, `PromptGuardPolicy`, to be managed by the Kuadrant operator.
+- Extend the `wasm-shim`, ammending the `actionSet` to optionally call a prompt guard filter implementation in an `ext-proc` service.
+  - Only the request body phase needs to be handled by the `ext-proc` service.
+- The `ext-proc` service contains all logic to parse the prompt from the request body and pass it to a configured guard model.
 
 ### Sequence Diagrams
 
 Below are some sequence diagrams that attempt to capture some of these flows and interactions at a high level.
-
 
 #### Sequence Diagram: Token rate limiting and auth
 
