@@ -185,6 +185,7 @@ spec:
     - Initial descriptors would include the request path, user id (if available) and the requested model.
   - Implement the token parsing logic and counter increment as the response body is processed
   - Give a means to specify a counter increment amount (currently, [hard-coded](https://github.com/Kuadrant/wasm-shim/blob/main/src/service/rate_limit.rs#L18) to `1`)
+    - Note: we should also look to offer the ability to pick a custom incrementor as part of our API for `RateLimitPolicy` users as well
 - The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our"internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
 - Look at ways to avoid 2 requests to limitador per single request to a model. This is not ideal to have a limit check and counter increment happen separately due to scaling concerns. However, this approach is sufficient for an initial implementation.
 
@@ -477,8 +478,4 @@ Note that while precedent set by other projects is some motivation, it does not 
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-Think about what the natural extension and evolution of your proposal would be and how it would affect the platform and project as a whole. Try to use this section as a tool to further consider all possible interactions with the project and its components in your proposal. Also consider how this all fits into the roadmap for the project and of the relevant sub-team.
-
-This is also a good place to "dump ideas", if they are out of scope for the RFC you are writing but otherwise related.
-
-Note that having something written down in the future-possibilities section is not a reason to accept the current or a future RFC; such notes should be in the section on motivation or rationale in this or subsequent RFCs. The section merely provides additional information.
+- With `TokenRateLimitPolicy`, we're looking to extend support to provide a custom incrementor. Given the change will be in the same path as `RateLimitPolicy`, we should look to offer similar support for that policy.
