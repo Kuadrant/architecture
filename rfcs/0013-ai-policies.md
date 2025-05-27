@@ -205,55 +205,50 @@ Below are some sequence diagrams that attempt to capture some of these flows and
 ```mermaid
 sequenceDiagram
   participant C as Client
-  participant HR as HTTP Route
-  participant WL as WASM/EnvoyFilter in Envoy (Rate Limit & Token Usage)
+  participant GW as Gateway/WASM in Envoy (Auth && Rate Limit & Token Usage)
   participant A as Authorino
   participant L as Limitador
   participant MS as KServe Model Server
-  participant RPM as Response Processor (Usage Metrics Parser)
 
   %% initial req
-  C->>HR: Incoming chat/completion request
-  HR->>WL: Forward request
+  C->>GW: Incoming chat/completion request
 
   %% JWT authentication check via Authorino
-  WL->>A: Validate JWT token & group access
+  GW->>A: Authorization::Check(CheckRequest)
   alt Auth success
-    A-->>WL: Auth valid
+    A-->>GW: Auth valid (CheckResponse::OkHttpResponse)
   else Auth fail
-    A-->>WL: Auth failed
-    WL->>HR: Return authentication error response (Error Response)
-    note right of WL: processing stops here for auth error
+    A-->>GW: Auth failed (CheckResponse::DeniedHttpResponse)
+    GW->>C: Return authentication failed response (401/403 Response)
+    note right of C: processing stops here for auth failed
   end
 
   %% pre-model-server token rate limiting check
-  WL->>L: Check if limits reached
+  GW->>GW: Parse model from request body
+  GW->>L: ShouldRateLimit (hits_addend: 0)
   alt Limit not reached
-    L-->>WL: Rate limit OK
+    L-->>GW: Rate limit OK
   else Limit reached
-    L-->>WL: Rate limit exceeded
-    WL->>HR: Return rate limit exceeded response (Error Response)
-    note right of WL: processing stops here for rate limit error
+    L-->>GW: Rate limit exceeded
+    GW->>C: Return rate limit exceeded response (429 OverLimit Response)
+    note right of C: processing stops here for being over limit
   end
 
-  %% forward request for inference if no early errors above
-  WL->>MS: Forward request for inference
-  MS-->>WL: Return model response with usage metrics
+  %% Route request for inference
+  GW->>MS: Route request for inference
+  MS-->>GW: Return model response with usage metrics
 
   %% process response: parse usage metrics from model response
-  WL->>RPM: Parse usage metrics
+  GW->>GW: Parse usage metrics from response body
 
   %% update token usage count via Limitador
-  RPM->>L: Increment token usage count via limitador
-  L-->>RPM: Acknowledge token count update
+  GW->>L: ShouldRateLimit (hits_addend: func(usage_metrics))
+  L-->>GW: Acknowledge token count update
 
   %% final inference response: deliver back to client
-  RPM-->>WL: Return modified response
-  WL->>HR: Pass response for flush
-  HR->>C: Deliver final LLM response
-
+  GW->>C: Pass response for flush
+  note right of C: response being returned even though on over limit
 ```
-
 
 #### Sequence Diagram: Prompt and Completion Response Guarding
 
