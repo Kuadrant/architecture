@@ -112,7 +112,7 @@ spec:
     rate:
       limit: 20000
       window: 1d
-    predicate: 'request.auth.claims["kuadrant.io/groups"].split(",").exists(g, g == "free")' 
+    predicate: 'request.auth.claims["kuadrant.io/groups"].split(",").exists(g, g == "free")'
     counter: auth.identity.userid
 ---
 apiVersion: kuadrant.io/v1alpha1
@@ -179,15 +179,45 @@ spec:
 ## TokenRateLimitPolicy
 
 - Add a new resource, `TokenRateLimitPolicy`, to be managed by the Kuadrant operator.
-- Extend the `wasm-shim` to:
-  - Add a new `action` to the `actionSet` types to execute the token rate limiting logic on the request and response.
-  - Implement the rate limit checking logic as the request body is processed. The request body has to be parsed to know which model is being targeted.
-    - Initial descriptors would include the request path, user id (if available) and the requested model.
-  - Implement the token parsing logic and counter increment as the response body is processed
-  - Give a means to specify a counter increment amount (currently, [hard-coded](https://github.com/Kuadrant/wasm-shim/blob/main/src/service/rate_limit.rs#L18) to `1`)
-    - Note: we should also look to offer the ability to pick a custom incrementor as part of our API for `RateLimitPolicy` users as well
-- The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our"internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
+- Bring AI concepts into the new abstraction. For instance, token based rate limiting for some specific model.
+- Expose cost strategies to be computed out of the existing token metrics. Basically this means that the user provides a function to compute the cost. Examples:
+  - cost based on `prompt_tokens`
+  - cost based on `prompt_tokens + completion_tokens`
+  - cost based on weighted average `X * prompt_tokens + Y * completion_tokens`
+
+### Data plane implications: new capabilities of the kuadrant's wasm module
+- Give a means to specify a counter increment amount (currently, [hard-coded](https://github.com/Kuadrant/wasm-shim/blob/main/src/service/rate_limit.rs#L18) to `1`)
+> Note: we should also look to offer the ability to pick a custom incrementor as part of our API for `RateLimitPolicy` users as well
+
+The wasm module configuration is extended to provide counter increment CEL expression on `ratelimit` typed actions.
+
+```yaml
+- service: my-ratelimit-service
+  scope: my-ratelimit-scope
+  predicates:
+  - auth.identity.anonymous == true
+  data:
+  - expression:
+        key: my_header
+        value: request.headers["my-custom-header"]
+  hits_addend:
+    expression: "response.body.usage.input_tokens"
+```
+> Note: the `hits_addend` field is optional and defaults to `1` for backward compatibility.
+
+> Note: the `hits_addend` field is an object that has one and only one field called `expression` to make explicit that it's a CEL expression.
+
+- Implement the rate-limiting logic during the processing of the downstream request body, as it must be parsed to determine which model is being targeted.
+  - Initial descriptors would include the request path, user id (if available) and the requested model.
+- Implement the rate-limiting logic during the processing of the upstream response body, as it must be parsed to determine the counter increment based on usage metrics.
+- The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our "internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
 - Look at ways to avoid 2 requests to limitador per single request to a model. This is not ideal to have a limit check and counter increment happen separately due to scaling concerns. However, this approach is sufficient for an initial implementation.
+- A new action type is not being considered. The WASM module will only initiate a ShouldRateLimit request to Limitador when all associated CEL expressions (namely `predicates`, `data`, and `hits_addend`) can be evaluated.
+- If any of the CEL expression references the `request.body`, the gRPC request will be triggered after the downstream request body has been parsed.
+- If any of the CEL expression references the `response.body`, the gRPC request will be triggered after the upstream response body has been parsed.
+- The order of actions is important, but some specific scenarios must be considered:
+  - If one action requires evaluation of the `request.body` and a subsequent action can be performed during the request headers phase, both actions will be executed during the request body phase.
+  - If one action requires evaluation of the `response.body` and a subsequent action can be performed during the request headers phase, the order will not be enforced. As a result, the second action will be executed before the first.
 
 ## PromptGuardPolicy
 
