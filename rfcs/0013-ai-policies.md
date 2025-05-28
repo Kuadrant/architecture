@@ -189,30 +189,66 @@ spec:
 - Give a means to specify a counter increment amount (currently, [hard-coded](https://github.com/Kuadrant/wasm-shim/blob/main/src/service/rate_limit.rs#L18) to `1`)
 > Note: we should also look to offer the ability to pick a custom incrementor as part of our API for `RateLimitPolicy` users as well
 
-The wasm module configuration is extended to provide counter increment CEL expression on `ratelimit` typed actions.
+The `data` section will have a broader purpose beyond just building descriptor entries.
+The meaning and usage of data computed from this section will depend on the specific service it’s used for.
+For rate limiting, data derived from the `data` section will be used to determine the *domain*, *hits_addend* value, and descriptor entries.
+Currently, the `data` section has no use for authentication purposes.
+However, this change lays the groundwork for including dynamic data that could be sent to Authorino (or other external authorization services) in the future.
+When preparing rate-limiting data from the `data` section,
+two reserved keys defined in the [well-known attributes](https://github.com/Kuadrant/architecture/blob/main/rfcs/0002-well-known-attributes.md#rate-limit-attributes)
+*can optionally* be used: `ratelimit.domain` and `ratelimit.hits_addend`.
+These keys cannot be reused as descriptor entry keys.
+Specifying multiple values for either `ratelimit.domain` or `ratelimit.hits_addend` will result in an error and the configuration will be rejected.
+If `ratelimit.hits_addend` is not specified in the `data` section, it defaults to `1`.
+If `ratelimit.domain` is not specified in the `data` section,
+the default value will be the one defined in the `scope` field of the action.
+
+Example:
 
 ```yaml
-- service: my-ratelimit-service
-  scope: my-ratelimit-scope
-  predicates:
-  - auth.identity.anonymous == true
+actions:
+- service: ratelimit-service
+  scope: ratelimit-scope-a
   data:
-  - expression:
-        key: my_header
-        value: request.headers["my-custom-header"]
-  hits_addend:
-    expression: "response.body.usage.input_tokens"
+    - expression:
+        key: model
+        value: 'parse("json", request.body).model'
+    - expression:
+        key: limit.low_limit__346b5e73
+        value: "1"
+    - expression:
+        key: ratelimit.domain
+        value: foobar
+    - expression:
+        key: ratelimit.hits_addend
+        value: 'parse("json", response.body).usage.total_tokens'
 ```
-> Note: the `hits_addend` field is optional and defaults to `1` for backward compatibility.
+> Note: 'parse("json", response.body)' is just an example that represents the action of body parsing; it is not necessarily syntactically correct.
 
-> Note: the `hits_addend` field is an object that has one and only one field called `expression` to make explicit that it's a CEL expression.
+When a prompt request for model `gpt-4.1`, whose response generates `35` tokens, reaches the WASM module with the configuration above,
+it will result in the following [ShouldRateLimit gRPC](https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ratelimit/v3/rls.proto) call:
+
+```json
+{
+  "domain": "foobar",
+  "descriptors": [
+      {
+           "entries": [
+               {"key": "model", "value": "gpt-4.1"},
+               {"key": "limit.low_limit__346b5e73", "value": "1"}
+           ]
+      }
+  ],
+  "hits_addend": 35
+}
+```
 
 - Implement the rate-limiting logic during the processing of the downstream request body, as it must be parsed to determine which model is being targeted.
   - Initial descriptors would include the request path, user id (if available) and the requested model.
 - Implement the rate-limiting logic during the processing of the upstream response body, as it must be parsed to determine the counter increment based on usage metrics.
 - The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our "internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
 - Look at ways to avoid 2 requests to limitador per single request to a model. This is not ideal to have a limit check and counter increment happen separately due to scaling concerns. However, this approach is sufficient for an initial implementation.
-- A new action type is not being considered. The WASM module will only initiate a ShouldRateLimit request to Limitador when all associated CEL expressions (namely `predicates`, `data`, and `hits_addend`) can be evaluated.
+- A new action type is not being considered. The WASM module will only initiate a ShouldRateLimit gRPC call to Limitador when all associated CEL expressions (namely `predicates` and `data`) can be evaluated.
 - If any of the CEL expression references the `request.body`, the gRPC request will be triggered after the downstream request body has been parsed.
 - If any of the CEL expression references the `response.body`, the gRPC request will be triggered after the upstream response body has been parsed.
 - The order of actions is important, but some specific scenarios must be considered:
