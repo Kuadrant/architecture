@@ -212,7 +212,7 @@ actions:
   data:
     - expression:
         key: model
-        value: 'parse("json", request.body).model'
+        value: requestBodyJSON('model')
     - expression:
         key: limit.low_limit__346b5e73
         value: "1"
@@ -221,9 +221,8 @@ actions:
         value: foobar
     - expression:
         key: ratelimit.hits_addend
-        value: 'parse("json", response.body).usage.total_tokens'
+        value: responseBodyJSON('usage.total_tokens')
 ```
-> Note: 'parse("json", response.body)' is just an example that represents the action of body parsing; it is not necessarily syntactically correct.
 
 When a prompt request for model `gpt-4.1`, whose response generates `35` tokens, reaches the WASM module with the configuration above,
 it will result in the following [ShouldRateLimit gRPC](https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ratelimit/v3/rls.proto) call:
@@ -249,11 +248,11 @@ it will result in the following [ShouldRateLimit gRPC](https://www.envoyproxy.io
 - The order of actions matters here, as usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our "internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
 - Look at ways to avoid 2 requests to limitador per single request to a model. This is not ideal to have a limit check and counter increment happen separately due to scaling concerns. However, this approach is sufficient for an initial implementation.
 - A new action type is not being considered. The WASM module will only initiate a ShouldRateLimit gRPC call to Limitador when all associated CEL expressions (namely `predicates` and `data`) can be evaluated.
-- If any of the CEL expression references the `request.body`, the gRPC request will be triggered after the downstream request body has been parsed.
-- If any of the CEL expression references the `response.body`, the gRPC request will be triggered after the upstream response body has been parsed.
+- If any of the CEL expression references the `requestBodyJSON()` CEL function, the gRPC request will be triggered after the downstream request body has been parsed.
+- If any of the CEL expression references the `responseBodyJSON()` CEL function, the gRPC request will be triggered after the upstream response body has been parsed.
 - The order of actions is important, but some specific scenarios must be considered:
-  - If one action requires evaluation of the `request.body` and a subsequent action can be performed during the request headers phase, both actions will be executed during the request body phase.
-  - If one action requires evaluation of the `response.body` and a subsequent action can be performed during the request headers phase, the order will not be enforced. As a result, the second action will be executed before the first.
+  - If one action requires evaluation of the `requestBodyJSON()` and a subsequent action can be performed during the request headers phase, both actions will be executed during the request body phase.
+  - If one action requires evaluation of the `responseBodyJSON()` and a subsequent action can be performed during the request headers phase, the order will not be enforced. As a result, the second action will be executed before the first.
 
 ## PromptGuardPolicy
 
