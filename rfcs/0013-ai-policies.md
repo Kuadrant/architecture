@@ -12,9 +12,9 @@ AI workloads are becoming increasingly prominent, and there is significant momen
 
 This RFC proposes three new Kuadrant APIs in the general AI Gateway realm:
 
-- `TokenRateLimitPolicy` (alts: `TokenRateLimitPolicy`)
-- `PromptGuardPolicy` (alts: `PromptSafetyPolicy`, `PromptFilterPolicy`)
-- `LLMResponseRiskCheckPolicy` (alts: `CompletionGuardPolicy`, `CompletionSafetyPolicy`)
+- `TokenRateLimitPolicy`
+- `PromptGuardPolicy`
+- `ResponseGuardPolicy`
 
 # Motivation
 [motivation]: #motivation
@@ -47,9 +47,9 @@ A Kuadrant `TokenRateLimitPolicy` is a custom resource provided by Kuadrant that
 
 A Kuadrant `PromptGuardPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM prompts to detect and block sensitive prompts.  Prompt guards can be defined and enforced for both Gateways and individual HTTPRoutes.
 
-### `LLMResponseRiskCheckPolicy`
+### `ResponseGuardPolicy`
 
-A Kuadrant `LLMResponseRiskCheckPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM content completion responses, to detect and block sensitive responses from LLMs. These can be defined and enforced for both Gateways and individual HTTPRoutes.
+A Kuadrant `ResponseGuardPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM content completion responses, to detect and block sensitive responses from LLMs. These can be defined and enforced for both Gateways and individual HTTPRoutes.
 
 ## Concepts Introduced
 
@@ -70,6 +70,23 @@ You’d define the following policies and resources:
 > Notes (somewhere): OpenAI-style usage metrics in responses required: `"usage":{"prompt_tokens":5,"total_tokens":15,"completion_tokens":10}`
 
 ```yaml
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: gold-users-auth
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: my-llm-gateway
+  rules:
+    authorization:
+      "gold-users":
+        opa:
+          rego: |
+            groups := split(object.get(input.auth.identity.metadata.annotations, "kuadrant.io/groups", ""), ",")
+            allow { groups[_] == "gold" }
+---
 apiVersion: kuadrant.io/v1
 kind: AuthPolicy
 metadata:
@@ -99,21 +116,41 @@ stringData:
   api_key: iamafreeuser
 type: Opaque
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-key-gold-user-1
+    app: my-llm
+  annotations:
+    kuadrant.io/groups: gold
+    secret.kuadrant.io/user-id: user-2
+stringData:
+  api_key: iamafreeuser
+type: Opaque
+---
 apiVersion: kuadrant.io/v1alpha1
 kind: TokenRateLimitPolicy
 metadata:
-  name: token-limit-free
+  name: token-limits
+  namespace: gateway-system
 spec:
   targetRef:
     group: gateway.networking.k8s.io
     kind: Gateway
     name: my-llm-gateway
-  limit:
-    rate:
-      limit: 20000
-      window: 1d
-    predicate: 'request.auth.claims["kuadrant.io/groups"].split(",").exists(g, g == "free")'
-    counter: auth.identity.userid
+  limits:
+    free:
+      rates:
+      - limit: 20000
+        window: 1d
+      predicate: 'request.auth.claims["kuadrant.io/groups"].split(",").exists(g, g == "free")'
+      counter: auth.identity.userid
+    gold:
+      rates:
+      - limit: 200000
+        window: 1d
+      predicate: 'request.auth.claims["kuadrant.io/groups"].split(",").exists(g, g == "gold")'
+      counter: auth.identity.userid
 ---
 apiVersion: kuadrant.io/v1alpha1
 kind: PromptGuardPolicy
@@ -143,7 +180,7 @@ spec:
           }
 ---
 apiVersion: kuadrant.io/v1alpha1
-kind: LLMResponseRiskCheckPolicy
+kind: ResponseGuardPolicy
 metadata:
   name: completion-check
 spec:
