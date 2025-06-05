@@ -287,9 +287,9 @@ it will result in the following [ShouldRateLimit gRPC](https://www.envoyproxy.io
 - A new action type is not being considered. The WASM module will only initiate a ShouldRateLimit gRPC call to Limitador when all associated CEL expressions (namely `predicates` and `data`) can be evaluated.
 - If any of the CEL expression references the `requestBodyJSON()` CEL function, the gRPC request will be triggered after the downstream request body has been parsed.
 - If any of the CEL expression references the `responseBodyJSON()` CEL function, the gRPC request will be triggered after the upstream response body has been parsed.
-- The order of actions is important, but some specific scenarios must be considered:
+- The order of actions is important and will be enforced:
   - If one action requires evaluation of the `requestBodyJSON()` and a subsequent action can be performed during the request headers phase, both actions will be executed during the request body phase.
-  - If one action requires evaluation of the `responseBodyJSON()` and a subsequent action can be performed during the request headers phase, the order will not be enforced. As a result, the second action will be executed before the first.
+  - If one action requires evaluation of the `responseBodyJSON()` and a subsequent action can be performed during any of the previous request phases, both actions will be executed during the response body phase.
 
 ## PromptGuardPolicy
 
