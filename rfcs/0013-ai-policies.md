@@ -10,11 +10,9 @@
 
 AI workloads are becoming increasingly prominent, and there is significant momentum among several related Gateway API projects to provide policies and tooling for managing these workloads, from the perspectives of both platform engineering and the app developer.
 
-This RFC proposes three new Kuadrant APIs in the general AI Gateway realm:
+This RFC proposes a new Kuadrant API in the general AI Gateway realm:
 
 - `TokenRateLimitPolicy`
-- `PromptGuardPolicy`
-- `ResponseGuardPolicy`
 
 # Motivation
 [motivation]: #motivation
@@ -29,9 +27,6 @@ Using the [Inference Platform Admin](https://github.com/kubernetes-sigs/gateway-
 - As an Inference Platform Admin, I want to protect my LLM infrastructure from being overwhelmed by limiting per user token usage across all models.
 - As an Inference Workload Owner, I want to apply token usage limits to specific models so that costs are controlled based on the heaviest GPU using models.
 - As an Inference Workload Owner, I want to apply different token usage limits to different user groups based on business requirements.
-- As an Inference Workload Owner, I want to guard my running model servers from risky prompts (input) with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b), and reject them before they are routed to (expensive) running models
-- As an Inference Workload Owner, I want to guard against risky chat completion responses (output) with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b)
-- As an Inference Workload Owner, I want to apply guards against different risky content categories to different user groups based on business requirements.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
@@ -43,27 +38,16 @@ Using the [Inference Platform Admin](https://github.com/kubernetes-sigs/gateway-
 A Kuadrant `TokenRateLimitPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`) designed to allow users to define and enforce rate limiting rules to control token usage within OpenAI-style LLM provider APIs. It allows users to set and enforce token budget constraints for Gateways, but also for individual services exposed as HTTPRoutes. Per-user or per-group token rate limiting can be enforced based on JWT claims.
 
 
-### `PromptGuardPolicy`
-
-A Kuadrant `PromptGuardPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM prompts to detect and block sensitive prompts.  Prompt guards can be defined and enforced for both Gateways and individual HTTPRoutes.
-
-### `ResponseGuardPolicy`
-
-A Kuadrant `ResponseGuardPolicy` is a custom resource provided by Kuadrant that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM content completion responses, to detect and block sensitive responses from LLMs. These can be defined and enforced for both Gateways and individual HTTPRoutes.
 
 ## Concepts Introduced
 
 - Token-based rate limiting: Controls usage by number of tokens, not just requests. Helps manage LLM costs.
-- Prompt guarding: Filters risky or unwanted prompts before they hit model servers.
-- Completion guarding: Reviews and filters model outputs before they're returned to users.
 
 ## Example Use Case
 
 Say you're serving a chat LLM behind a Gateway, which implements an OpenAI-style chat `/completion` API. You want:
 
 - Free-tier users limited to 20k tokens/day.
-- Guardrails to reject prompts asking for harmful, violent or sexual content.
-- Output filtering to block generally harmful completions.
 
 You’d define the following policies and resources:
 
@@ -151,63 +135,11 @@ spec:
         window: 1d
       predicate: 'request.auth.claims["kuadrant.io/groups"].split(",").exists(g, g == "gold")'
       counter: auth.identity.userid
----
-apiVersion: kuadrant.io/v1alpha1
-kind: PromptGuardPolicy
-metadata:
-  name: prompt-check
-spec:
-  model:
-    url: http://huggingface-granite-guardian-default.example.com/v1
-    apiKey:
-      secretRef:
-        name: granite-api-key
-        key: token
-  categories:
-    - harm
-    - violence
-    - sexual_content
-  response:
-    unauthorized:
-      headers:
-        "content-type":
-          value: application/json
-      body:
-        value: |
-          {
-            "error": "Unauthorized",
-            "message": "Request prompt blocked by content policy."
-          }
----
-apiVersion: kuadrant.io/v1alpha1
-kind: ResponseGuardPolicy
-metadata:
-  name: completion-check
-spec:
-  model:
-    url: http://huggingface-granite-guardian-default.example.com/v1
-    apiKey:
-      secretRef:
-        name: granite-api-key
-        key: token
-  categories:
-    - harm
-  response:
-    forbidden:
-      headers:
-        "content-type":
-          value: application/json
-      body:
-        value: |
-          {
-            "error": "Forbidden",
-            "message": "Response blocked by content policy."
-          }
 ```
 
 ## User Impact
 
-- Existing users: These policies extend existing workflows. Policy attachment is the same; what's different is the semantics (tokens vs requests, prompt filtering, etc).
+- Existing users: These policies extend existing workflows. Policy attachment is the same; what's different is the semantics (tokens vs requests).
 - New users: Can adopt Kuadrant to secure and manage LLM workloads from the start.
 
 # Reference-level explanation
@@ -291,12 +223,6 @@ it will result in the following [ShouldRateLimit gRPC](https://www.envoyproxy.io
   - If one action requires evaluation of the `requestBodyJSON()` and a subsequent action can be performed during the request headers phase, both actions will be executed during the request body phase.
   - If one action requires evaluation of the `responseBodyJSON()` and a subsequent action can be performed during any of the previous request phases, both actions will be executed during the response body phase.
 
-## PromptGuardPolicy
-
-- Add a new resource, `PromptGuardPolicy`, to be managed by the Kuadrant operator.
-- Extend the `wasm-shim`, ammending the `actionSet` to optionally call a prompt guard filter implementation in an `ext-proc` service.
-  - Only the request body phase needs to be handled by the `ext-proc` service.
-- The `ext-proc` service contains all logic to parse the prompt from the request body and pass it to a configured guard model.
 
 ### Sequence Diagrams
 
@@ -352,49 +278,6 @@ sequenceDiagram
   note right of C: response being returned even though on over limit
 ```
 
-#### Sequence Diagram: Prompt and Completion Response Guarding
-
-```mermaid
-sequenceDiagram
-  participant C as Client
-  participant HR as HTTP Route
-  participant WL as WASM/EnvoyFilter in Envoy (Guard Processor)
-  participant PG as LLM Prompt Guardian
-  participant MS as KServe Model Server
-  participant RG as LLM Response Guardian
-
-  %% initial req
-  C->>HR: Incoming chat/completion request
-  HR->>WL: Forward request
-
-  %% prompt risk check
-  WL->>PG: Initiate prompt risk check
-  alt Prompt Risk Check Passed
-    PG-->>WL: Risk check OK
-  else Prompt risk failed
-    PG-->>WL: Risk check failed
-    WL->>HR: Return prompt guard error response (Error Response)
-    note right of WL: Processing stops here for prompt risk error
-  end
-
-  %% forward request for inference if no early errors above
-  WL->>MS: Forward request for inference
-  MS-->>WL: Return model response
-
-  %% response risk check
-  WL->>RG: Initiate response risk check
-  alt Response Risk Check Passed
-    RG-->>WL: Risk check OK
-  else Response risk check failed
-    RG-->>WL: Risk check failed
-    WL->>HR: Return LLM response risk error response (Error Response)
-    note right of WL: Processing stops here for response risk error
-  end
-
-  %% final inference response: deliver back to client
-  WL->>HR: Forward final response
-  HR->>C: Deliver final LLM response
-```
 
 ### Parsing OpenAI-style usage metrics
 
@@ -576,3 +459,84 @@ Note that while precedent set by other projects is some motivation, it does not 
 [future-possibilities]: #future-possibilities
 
 - With `TokenRateLimitPolicy`, we're looking to extend support to provide a custom incrementor. Given the change will be in the same path as `RateLimitPolicy`, we should look to offer similar support for that policy.
+
+## PromptGuardPolicy
+
+A Kuadrant `PromptGuardPolicy` could be a custom resource that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM prompts to detect and block sensitive prompts. Prompt guards could be defined and enforced for both Gateways and individual HTTPRoutes.
+
+Implementation considerations:
+- Add a new resource, `PromptGuardPolicy`, to be managed by the Kuadrant operator.
+- Extend the `wasm-shim`, ammending the `actionSet` to optionally call a prompt guard filter implementation in an `ext-proc` service.
+  - Only the request body phase needs to be handled by the `ext-proc` service.
+- The `ext-proc` service contains all logic to parse the prompt from the request body and pass it to a configured guard model.
+
+Use cases:
+- As an Inference Workload Owner, I want to guard my running model servers from risky prompts (input) with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b), and reject them before they are routed to (expensive) running models
+- As an Inference Workload Owner, I want to apply guards against different risky content categories to different user groups based on business requirements.
+
+## ResponseGuardPolicy
+
+A Kuadrant `ResponseGuardPolicy` could be a custom resource that targets Gateway API resources (`Gateway` and `HTTPRoute`), enabling users to define and enforce content safety rules with LLM content completion responses, to detect and block sensitive responses from LLMs. These could be defined and enforced for both Gateways and individual HTTPRoutes.
+
+Use cases:
+- As an Inference Workload Owner, I want to guard against risky chat completion responses (output) with a model such as [Granite Guardian](https://huggingface.co/ibm-granite/granite-guardian-3.1-2b)
+
+### Example configurations
+
+Example PromptGuardPolicy:
+```yaml
+apiVersion: kuadrant.io/v1alpha1
+kind: PromptGuardPolicy
+metadata:
+  name: prompt-check
+spec:
+  model:
+    url: http://huggingface-granite-guardian-default.example.com/v1
+    apiKey:
+      secretRef:
+        name: granite-api-key
+        key: token
+  categories:
+    - harm
+    - violence
+    - sexual_content
+  response:
+    unauthorized:
+      headers:
+        "content-type":
+          value: application/json
+      body:
+        value: |
+          {
+            "error": "Unauthorized",
+            "message": "Request prompt blocked by content policy."
+          }
+```
+
+Example ResponseGuardPolicy:
+```yaml
+apiVersion: kuadrant.io/v1alpha1
+kind: ResponseGuardPolicy
+metadata:
+  name: completion-check
+spec:
+  model:
+    url: http://huggingface-granite-guardian-default.example.com/v1
+    apiKey:
+      secretRef:
+        name: granite-api-key
+        key: token
+  categories:
+    - harm
+  response:
+    forbidden:
+      headers:
+        "content-type":
+          value: application/json
+      body:
+        value: |
+          {
+            "error": "Forbidden",
+            "message": "Response blocked by content policy."
+          }
+```
