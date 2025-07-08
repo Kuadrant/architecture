@@ -24,67 +24,36 @@ In some cases, such as our current CoreDNS solution, there is no central off clu
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-## Delegating Authority to Publish
+## DNS Operator modes
 
-Delegating authority is a concept whereby you can optionally specify that you do not want each DNSPolicy to publish its endpoints directly to a provider, but instead have a central authoritative DNSRecord be created that will take care of publishing all endpoints for a particular set of records.
+The DNS Operator can be configured to work in different modes specified via a controller flag `mode` which must be one of `default`, `primary` or `remote` i.e. `--mode=[default|primary|remote]`.
+To allow for customisation of this mode via an OLM deployment of the kuadrant-operator, the mode will also be configurable via an environment variable `DNS_MODE`.  
 
-This feature is controlled by the `authorityDelegation` field in the DNSPolicy spec, which has a single required field `role` which must be one of `primary` or `remote`.
+The mode will determine the behaviour of the reconciliation of all DNSRecords that this controller instance is processing, with the `primary` and `remote` modes designed to work together in multi cluster environments.
 
-- `spec.authorityDelegation` when set signals that records produced by this policy will have their endpoints published via an authoritative record
-- `spec.authorityDelegation.role` signals what role this particular policy is taking, it is expected there should be at least one `primary`
+### Default (current behaviour)
 
-### Primary Role
+DNSRecords will be reconciled and published to the provider by this instance with no delegation, this is the same behaviour as the operator today and is the default mode used if none is specified.
+DNSRecords on these clusters must have access to valid provider credentials referenced in the spec.
+This mode should be selected for single cluster scenarios, and/or where the current approach to multi cluster is to be maintained.
 
-There should always be at least one primary, and the primary is in charge of ensuring that the authoritative DNSRecord that all publishing requests are delegated to is created.
-The authoritative DNSRecord is created in the same namespace as the original DNSRecord created by the DNSPolicy and at a minimum will contain the original DNSRecords endpoints.  
+### Primary
 
-### Remote Role
+DNSRecords will be reconciled and published to the provider by this instance through an authoritative DNSRecord which is created on behalf of the primary DNSRecord that all publishing requests are delegated to.
+DNSRecords on these clusters must have access to valid provider credentials referenced in the spec.
+The authoritative DNSRecord is created in the same namespace as the original DNSRecord (created by the DNSPolicy or otherwise) and at a minimum will contain the primary DNSRecords endpoints.
+The remaining specification of the authoritative DNSRecord is synced from the original primary DNSRecord (rootHost, providerRef etc..) 
+This mode should be selected for multi cluster scenarios where a designated "control plane" cluster(s) are being configured with elevated privileges to access external DNS providers.
 
-A remote will only have its endpoints added to an authoritative DNSRecord that already exists in the current namespace and does not initiate the creation of the authoritative DNSRecord.
-If an authoritative DNSRecord does not exist, an error will be reported until such time as one does exist.
+### Remote
 
-**Example 1.** DNSPolicy using authority delegation with `primary` role
-```yaml
-apiVersion: kuadrant.io/v1
-kind: DNSPolicy
-metadata:
-  name: prod-web-coredns
-spec:
-  authorityDelegation:
-    role: primary
-  targetRef:
-    name: prod-web-istio-coredns
-    group: gateway.networking.k8s.io
-    kind: Gateway
-  providerRefs:
-    - name: dns-provider-credentials-coredns
-```
-
-**Example 2.** DNSPolicy using authority delegation with `remote` role
-```yaml
-apiVersion: kuadrant.io/v1
-kind: DNSPolicy
-metadata:
-  name: prod-web-coredns
-spec:
-  authorityDelegation:
-    role: remote
-  targetRef:
-    name: prod-web-istio-coredns
-    group: gateway.networking.k8s.io
-    kind: Gateway
-  providerRefs:
-    - name: dns-provider-credentials-coredns
-```
-
-If the above example policies were created, three DNSRecord resources would exist in the target namespace, with a single DNSRecord resource (the authoritative) appearing as the owner of all endpoints in the target dns provider.
+DNSRecords will be reconciled by this instance, but only to maintain a finalizer on the resource. 
+The expectation is that a different "primary" cluster will reconcile the resource, adding its endpoints to the shared authoritative record, and update its status.
 
 Note: While this concept is intended to work with the multi cluster concept described below, it is also possible to use this on a single cluster to combine several records together. 
 This might be desirable if you have many records and want to reduce the number of API calls to a provider and also the number of owner TXT records that need to be managed.
 
-[//]: # (mnairn: Add a diagram or something to visualise the records being produced  )
-
-## Multi Cluster
+## Cluster Aware Controller
 
 The DNS reconciler can be made cluster aware allowing it to process DNSRecord resources on other clusters as well as its own.
 
@@ -107,6 +76,21 @@ metadata:
   namespace: kuadrant-system
 type: Opaque
 ```
+
+## Namespace requirements for multi cluster
+
+ToDo Expectations of layout of namespaces and names of DNSRecords to match across clusters
+
+## Example Configurations
+
+**Default configuration.** Multi cluster using default node (Current behaviour)
+
+![img.png](./0000-dns-cluster-aware-delegation-assets/multi-cluster-default-mode.png)
+
+**Primary/Remote Configuration.** Multi cluster using primary/remote modes and cluster aware controller
+
+![img.png](./0000-dns-cluster-aware-delegation-assets/multi-custer-primary-remote-cluster-aware.png)
+
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -133,6 +117,7 @@ Clusters are configured via Secrets containing kubeconfig data and labelled as c
 [drawbacks]: #drawbacks
 
 * Adds another path through the code that isn't strictly necessary for the majority of providers.
+* A record being added that introduces a failure in the provider request (misconfiguration etc..) will cause multiple clusters endpoints from being updated until the issue is resolved. 
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
