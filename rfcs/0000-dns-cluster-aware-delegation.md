@@ -97,9 +97,34 @@ ToDo Expectations of layout of namespaces and names of DNSRecords to match acros
 
 ## CRD Provider
 
-A new provider implementation that allows a DNSRecord resource to act as a zone record will be created. 
-Endpoints from the source are injected into the target "zone" record using the same plan logic as all other providers. 
-A zone record could be getting updated by many DNSRecords just like any other providers zone.
+Add a new provider implementation (crd) that allows a DNSRecord resource to act as a central "zone" DNSRecord that can be updated by many other DNSRecord resources in matching namespaces.
+Endpoints from the source are injected into the target "zone" record using the same plan logic as all other providers in order to take advantage of already existing conflict resolution e.g. A vs CNAME record types for the same dns names.
+
+![img.png](./0000-dns-cluster-aware-delegation-assets/crd-provider.png)
+
+### Changes required
+
+* Update the provider factory constructor logic to allow the kubeclient to optionally be passed to providers
+* Add a new provider called "crd" that implements the Provider interface 
+  * `provider.Records()` should be implemented to list all DNSRecords in the current namespace that match a given label selector (default: kuadrant.io/crd-provider-zone-record).
+    * The label selector should be configurable via data contained in the provider secret (i.e CRD_ZONE_RECORD_LABEL=my-own-label-selector)
+  * `provider.DNSZones()` should return all DNSRecords with the configured label selector, transformed into `provider.DNSZone` resources
+    * DNSZone.ID = DNSRecord.metadata.name
+    * DNSZone.DNSName = DNSRecord.spec.rootHost
+  * `provider.ApplyChanges()` should update the target DNSRecord resource using the given changes by modifying the DNSRecord.spec.endpoints slice by applying the creates/updates/deletes and saving the changes. 
+    * The correct target DNSRecord should be located using the ZoneID that is already passed along by the controller in config.ZoneIDFilter.ZoneIDs[0]
+
+**Example** CRD Provider secret with optional label selector
+```yaml
+apiVersion: v1
+kind: Secret
+data:
+  CRD_ZONE_RECORD_LABEL: kuadrant.io/primary-authoritative-zone-record
+metadata:
+  name: my-provider-crd-secret
+  namespace: my-namespace
+type: kuadrant.io/crd
+```
 
 ## Authority Delegation
 
