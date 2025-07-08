@@ -53,7 +53,12 @@ N/A
 
 # Unresolved questions
 
-N/A
+As part of this work, we will need to map HTTPRoute hostnames to listeners. This isn't something done by Gateway API and exposed from their API unless you use a section name in the parentRef. So we will need to come up with a way to match these and document. Gateway API only allows a single depth wildcard which makes things simpler:
+
+- Exact Match hostname
+- Longest Suffix match on hostname
+- Fall back Listener (A listener with no hostname specified )
+- No Match
 
 # Future possibilities
 
