@@ -1,6 +1,6 @@
-# DNS Cluster Aware Delegation
+# Cluster Aware DNSRecord Delegation
 
-- Feature Name: `dns_cluster_aware_delegation`
+- Feature Name: `cluster_aware_dnsrecord_delegation`
 - Start Date: (fill me in with today's date, YYYY-MM-DD)
 - RFC PR: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/pull/0000)
 - Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
@@ -42,22 +42,24 @@ This mode should be selected for single cluster scenarios, and/or where the curr
 DNSRecords will be reconciled and published to the provider through an authoritative zone DNSRecord which is created on behalf of the primary DNSRecord with all publishing requests delegated to it.
 The dns operator will ensure the existence of the authoritative zone DNSRecord, with:
   * the same `metdata.namespace` as the current record
-  * a `metadata.name` generated based on the current records `spec.rootHost` i.e. `foo-example-com_authoritative_zone`
+  * a descriptive generated `metadata.name` i.e. `primary-authoritative-zone-record-<hash>`
   * the same `spec.rootHost` as the current record
   * a label that signals it is an authoritative zone record and the `rootHost` (zone dnsName) it's for i.e. `kuadrant.io/primary-authoritative-zone-record=foo.example.com`
   * an empty `spec.providerRef` relying on the existence of a [default provider secret](#default-provider-secret) having been created in the same namespace.
+
 DNSRecords are not expected to have a `spec.providerRef` and any set will be ignored when reconciled. Internally an instance of the [dnsrecord provider](#dnsrecord-provider) will be loaded with the `CRD_ZONE_RECORD_LABEL` set to `kuadrant.io/primary-authoritative-zone-record=<$spec.RootHost>`.
+
 The above allows a DNSRecord to be reconciled using the created/existing authoritative zone DNSRecord as the target for all updates.
 
 This mode should be selected for multi cluster scenarios where this cluster is a designated "primary" cluster with elevated privileges to access external DNS providers.
 
 ### Remote
 
-DNSRecords will be reconciled by this instance, but only to maintain a finalizer on the resource. 
+DNSRecords will be reconciled by this instance, but only to maintain a finalizer on the resource and to manage the state of individual endpoints using health checks. 
 DNSRecords are not expected to have a `providerRef` and any set will be ignored when reconciled on the corresponding primary clusters.
 The expectation is that a different "primary" cluster will reconcile the resource, adding its endpoints to the shared authoritative zone record on its cluster, and update its status.
 
-This mode should be selected for multi cluster scenarios where this cluster is a "remote" non privileged cluster.
+This mode should be selected for multi cluster scenarios where this cluster is a "remote" non-privileged cluster.
 
 ## Cluster Aware Controller
 
@@ -90,7 +92,8 @@ A new concept of "default provider secret" will be introduced that removes the n
 When a DNSPolicy is created with no `providerRef` the resulting DNSRecord during initial reconciliation will search for a default provider secret in the current namespace to use instead.
 The DNSRecord status will be updated to include the selected provider secret as a `providerRef` in the status.
 A default provider secret is any provider secret that has been appropriately labelled with the kuadrant default provider label (kuadrant.io/default-provider=true)
-Only one default provider can exist in any namespace and more than one labelled as such will result in an error (mnairn: I have actually no idea where????) 
+Only one default provider can exist in any namespace. 
+If more than one exists in the same namespace, any DNSRecord resource searching for a default provider will have its status updated with an appropriate error message and will not be able to reconcile until the extra provider secret is removed or re-labelled.  
 
 **Example** AWS Provider set as default
 ```yaml
@@ -109,21 +112,21 @@ type: kuadrant.io/aws
 
 ## Example Configurations
 
-**Default configuration.** Multi cluster using default node (Current behaviour)
+**Default configuration.** Multi cluster using default mode (Current behaviour)
 
-![img.png](./0000-dns-cluster-aware-delegation-assets/multi-cluster-default-mode.png)
+![img.png](./0000-cluster-aware-dnsrecord-delegation-assets/multi-cluster-default-mode.png)
 
 **Primary/Remote Configuration.** Multi cluster using primary/remote modes, cluster aware controller and default provider secrets
 
-![img.png](./0000-dns-cluster-aware-delegation-assets/multi-custer-primary-remote-cluster-aware.png)
+![img.png](./0000-cluster-aware-dnsrecord-delegation-assets/multi-custer-primary-remote-cluster-aware.png)
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
 ## Kuadrant Operator
 
-The only change required in the kuadrant operator is to allow the DNSPolices to be created with specifying any provider.
-In multi cluster scenarios using the dns operator in "primary" or "remote" modes, the use of a [default provider secret](#default-provider-secret) on the primary clusters will be required rendering any providerRef specified in the policy spec redundant. 
+The only change required in the kuadrant operator is to allow the DNSPolices to be created without a providerRef specified.
+In multi cluster scenarios using the dns operator in "primary" or "remote" modes, the use of a [default provider secret](#default-provider-secret) on the primary clusters will be required rendering any `providerRef` specified in the policy spec redundant. 
 
 ### Changes required
 * Update the DNSPolicy API:
@@ -132,12 +135,22 @@ In multi cluster scenarios using the dns operator in "primary" or "remote" modes
 
 ## DNS Operator
 
+### Allow default provider secret
+
+#### Changes required
+
+ToDO mnairn: Add updated details here
+
+* Update the DNSRecord API:
+  * make `spec.providerRef` optional
+  * add  `status.providerRef`
+
 ### Add DNSRecord provider
 
 Add a new provider implementation (dnsrecord) that allows a DNSRecord resource to act as a central "zone" DNSRecord that can be updated by many other DNSRecord resources in matching namespaces.
 Endpoints from the source are injected into the target "zone" record using the same plan logic as all other providers in order to take advantage of already existing conflict resolution e.g. A vs CNAME record types for the same dns names.
 
-![img.png](./0000-dns-cluster-aware-delegation-assets/crd-provider.png)
+![img.png](./0000-cluster-aware-dnsrecord-delegation-assets/dnsrecord-provider.png)
 
 #### Changes required
 
@@ -164,19 +177,45 @@ metadata:
 type: kuadrant.io/crd
 ```
 
-### Add authoritative record delegation support
-
-ToDO mnairn: Add updated details here
-
-### Allow default provider secret
+### Make controller cluster aware
 
 #### Changes required
 
-ToDO mnairn: Add updated details here
+* Add watch on secrets in a specified namespace e.g. kuadrant-system with a given label e.g. `kuadrant.io/multicluster-kubeconfig: "true"`
+* The namespace and label should be configurable via flags to the controller:
+  * `--cluster-secret-namespace` The Namespace to look for cluster secrets. default: kuadrant-system
+  * `--cluster-secret-label` The label that identifies a Secret resource as a cluster secret. default: kuadrant.io/multicluster-kubeconfig
+* Cluster secrets are expected to contain kubeconfig data, when one is found it should be registered as a "cluster" and a watch for DNSRecord resources started inside a runnable go routine.
+* 
+* Add a new role to the dns operator that contains the minimum required permissions needed for a "primary" cluster to process the DNSRecord resources on a "remote" cluster.
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: remote-cluster-role
+rules:
+- apiGroups:
+    - kuadrant.io
+  resources:
+    - dnsrecords
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
+    - kuadrant.io
+  resources:
+    - dnsrecords/status
+  verbs:
+    - get
+    - patch
+    - update
+```
+* Add a means e.g. script, kuadrantctl command etc.., in which a user can easily create a new cluster secret on a target "primary" cluster giving details of a "remote" cluster and service account on it.
 
-* Update the DNSRecord API:
-  * make `spec.providerRef` optional
-  * add  `status.providerRef`
+### Add authoritative record delegation support
+
+ToDO mnairn: Add updated details here
 
 ### Update CoreDNS provider
 
@@ -208,8 +247,6 @@ This would also only require the "primary" to have read access, or very limited 
 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
-
-* We ideally do not want to need access to secrets on the `remote` clusters from the `primary`, but we currently rely on determining the provider via the type of secret. During merging of remote records on remote clusters we might need to know what provider a particular policy is targeting in order to properly match it up to an authoritative record on the primary.
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
