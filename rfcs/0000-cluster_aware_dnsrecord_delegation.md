@@ -84,7 +84,10 @@ type: Opaque
 
 ## Namespace requirements for multi cluster
 
-ToDo mnairn: Expectations of layout of namespaces and names of DNSRecords to match across clusters
+When configuring clusters to work in multi cluster modes, certain requirements must be met in order for DNSRecords from remote clusters to be considered part of the same record set and ultimately combined into the single "authoritative" DNSRecord on the "primary".
+
+* DNSRecord, and by extension on all other relevant resources Gateways, DNSPolicy etc., must be in a namespace with the same name on both the "primary" and "remote" clusters.
+* Default provider secrets must be in a namespace with the same name on the "primary" and the DNSRecord on the "remote".
 
 ## Default Provider Secret
 
@@ -139,11 +142,13 @@ In multi cluster scenarios using the dns operator in "primary" or "remote" modes
 
 #### Changes required
 
-ToDO mnairn: Add updated details here
-
 * Update the DNSRecord API:
   * make `spec.providerRef` optional
   * add  `status.providerRef`
+* If no `spec.providerRef` the dns operator will look for a provider secret labelled as the "default" i.e. `kuadrant.io/default-provider=true` and assign that to the DNSRecord
+  * If no provider found the record will not become ready and will have an appropriate error message
+* Update the status to specify the `providerRef` that was selected, in the case where a `providerRef` is specified in the spec this should also be reflected in the status.
+* When loading the provider after provider selection it should load it using the status `providerRef`
 
 ### Add DNSRecord provider
 
@@ -186,7 +191,6 @@ type: kuadrant.io/crd
   * `--cluster-secret-namespace` The Namespace to look for cluster secrets. default: kuadrant-system
   * `--cluster-secret-label` The label that identifies a Secret resource as a cluster secret. default: kuadrant.io/multicluster-kubeconfig
 * Cluster secrets are expected to contain kubeconfig data, when one is found it should be registered as a "cluster" and a watch for DNSRecord resources started inside a runnable go routine.
-* 
 * Add a new role to the dns operator that contains the minimum required permissions needed for a "primary" cluster to process the DNSRecord resources on a "remote" cluster.
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -219,11 +223,20 @@ ToDO mnairn: Add updated details here
 
 ### Update CoreDNS provider
 
-ToDO mnairn: Add updated details here
+Update the CoreDNS provider to rely solely on the new multi cluster mechanism being introduced by this rfc. 
+Unlike other providers, this will be the only supported way of achieving multi cluster support when using CoreDNS.
 
-Updates the dns operator to allow watches for DNSRecords on different clusters, ultimately allowing a single controller to reconcile DNSRecords from multiple clusters. 
-Clusters are configured via Secrets containing kubeconfig data and labelled as cluster secrets.
+#### Changes required
 
+* Revert the majority of CoreDNS specific logic added to the dns controller, and instead let it follow the nomral reconciliation path.
+* Add a mechanism that allows "labels" to be specified, per provider, that must be ensured on the target DNSRecord resources they are targeting.
+* Add the "kuadrant.io/coredns-zone-name=$rootHost" label to DNSRecords using the CoreDNS provider so that it is picked up directly by the kuadrant coredns plugin.
+* The majority of the `provider` interface will be stubbed out since it no longer needs to do any endpoint manipulation directly, instead relying on the target DNSRecord being in the desired state.
+  * `provider.DNSZones` unchanged, will still be used for zone selection
+  * `provider.DNSZoneForHost` unchanged
+  * `provider.Records` stubbed, no longer needed
+  * `provider.ApplyChanges` stubbed, no longer needed
+  * `provider.AdjustEndpoints` stubbed, no longer needed
 # Drawbacks
 [drawbacks]: #drawbacks
 
