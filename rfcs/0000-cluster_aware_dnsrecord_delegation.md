@@ -64,7 +64,7 @@ This mode should be selected for multi cluster scenarios where this cluster is a
 ## Cluster Aware Controller
 
 The DNS reconciler can be made cluster aware allowing it to process DNSRecord resources on other clusters as well as its own.
-Making the controller aware of other clusters is done via specially labeled secret resources containing kubeconfig data that exist in the `kuadrant-system` namespace.
+Making the controller aware of other clusters is done via labeled secret resources (`kuadrant.io/multicluster-kubeconfig: "true"`) containing kubeconfig data that exist in the `kuadrant-system` namespace.
 The kubeconfig data should be generated from an appropriately scoped service account that exists on the target cluster.
 When a cluster secret is created, the DNS controller on that cluster will automatically detect it and start watching for DNSRecord resources on that external cluster as well as its own.
 
@@ -94,7 +94,7 @@ When configuring clusters to work in multi cluster modes, certain requirements m
 A new concept of "default provider secret" will be introduced that removes the need for a `providerRef` to be specified on every DNSRecord and DNSPolicy.
 When a DNSPolicy is created with no `providerRef` the resulting DNSRecord during initial reconciliation will search for a default provider secret in the current namespace to use instead.
 The DNSRecord status will be updated to include the selected provider secret as a `providerRef` in the status.
-A default provider secret is any provider secret that has been appropriately labelled with the kuadrant default provider label (kuadrant.io/default-provider=true)
+A default provider secret is any provider secret that has been appropriately labelled with the kuadrant default provider label (`kuadrant.io/default-provider=true`)
 Only one default provider can exist in any namespace. 
 If more than one exists in the same namespace, any DNSRecord resource searching for a default provider will have its status updated with an appropriate error message and will not be able to reconcile until the extra provider secret is removed or re-labelled.  
 
