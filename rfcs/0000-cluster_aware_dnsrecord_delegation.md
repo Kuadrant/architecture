@@ -27,7 +27,7 @@ In some cases, such as our current CoreDNS solution, there is no central off clu
 ## DNS Operator modes
 
 The DNS Operator can be configured to work in different modes specified via a controller flag `mode` which must be one of `default`, `primary` or `remote` i.e. `--mode=[default|primary|remote]`.
-To allow for customisation of this mode via an OLM deployment of the kuadrant-operator, the mode will also be configurable via an environment variable `DNS_MODE`.  
+To allow for customisation of this mode via an OLM deployment of the kuadrant-operator, the mode will also be configurable via an environment variable `DNS_MODE`, which can optionally be loaded from a config map in the controller namespace.
 
 The mode will determine the behaviour of the reconciliation of all DNSRecords that this controller instance is processing, with the `primary` and `remote` modes designed to work together in multi cluster environments.
 
@@ -220,6 +220,11 @@ rules:
 ### Add authoritative record delegation support
 
 ToDO mnairn: Add updated details here
+
+#### Changes required
+
+* Allow the dns operator to load controller configuration options from a configMap that optionally exists in the same namespace as the controller. 
+* The configMap should allow env vars that correspond to controller flags to be set and override the value. e.g. `DNS_MODE="primary" == --mode=primary`.
 
 ### Update CoreDNS provider
 
