@@ -150,36 +150,40 @@ In multi cluster scenarios using the dns operator in "primary" or "remote" modes
 * Update the status to specify the `providerRef` that was selected, in the case where a `providerRef` is specified in the spec this should also be reflected in the status.
 * When loading the provider after provider selection it should load it using the status `providerRef`
 
-### Add DNSRecord provider
+### Add Endpoint provider
 
-Add a new provider implementation (dnsrecord) that allows a DNSRecord resource to act as a central "zone" DNSRecord that can be updated by many other DNSRecord resources in matching namespaces.
-Endpoints from the source are injected into the target "zone" record using the same plan logic as all other providers in order to take advantage of already existing conflict resolution e.g. A vs CNAME record types for the same dns names.
+Add a new provider implementation (endpoints) that allows any resource that fulfils the contract for an [external-dns Endpoint resource](https://github.com/kubernetes-sigs/external-dns/blob/master/apis/v1alpha1/dnsendpoint.go#L36-L42) to act as a central "zone" resource that can be updated by many DNSRecord resources in matching namespaces.
+Endpoints from the source are injected into the target "zone" resource endpoints slice using the same plan logic as all other providers in order to take advantage of already existing conflict resolution e.g. A vs CNAME record types for the same dns names.
 
 ![img.png](./0000-cluster-aware-dnsrecord-delegation-assets/dnsrecord-provider.png)
 
 #### Changes required
 
 * Update the provider factory constructor logic to allow the kubeclient to optionally be passed to providers
-* Add a new provider called "dnsrecord" that implements the Provider interface 
-  * `provider.Records()` should be implemented to list all DNSRecords in the current namespace that match a given label selector (default: kuadrant.io/crd-provider-zone-record="true").
+* Add a new provider called "endpoints" that implements the Provider interface
+  * Configuration should allow a GVK to be specified which determines the CRD resources that should be considered zones, default to `kuadrant.io/v1alpha1.DNSRecord`
+  * `provider.Records()` should be implemented to list all endpoint resources in the current namespace that match a given label selector (default: kuadrant.io/crd-provider-zone-record="true").
     * The label selector should be configurable via data contained in the provider secret (e.g. CRD_ZONE_RECORD_LABEL=my-own-label="my-expected-label-value")
-    * The label selector should match exactly allowing it to be used in different scenarios where we might want a more specific match e.g. kuadrant.io/primary-authoritative-zone-record="api.example.com"  
-  * `provider.DNSZones()` should return all DNSRecords with the configured label selector, transformed into `provider.DNSZone` resources
-    * DNSZone.ID = DNSRecord.metadata.name
-    * DNSZone.DNSName = DNSRecord.spec.rootHost
-  * `provider.ApplyChanges()` should update the target DNSRecord resource using the given changes by modifying the DNSRecord.spec.endpoints slice by applying the creates/updates/deletes and saving the changes. 
-    * The correct target DNSRecord should be located using the ZoneID that is already passed along by the controller in config.ZoneIDFilter.ZoneIDs[0]
+    * The GVK of the endpoint resources to target should be configurable via data contained in the provider secret (e.g. ENDPOINT_GVK=kuadrant.io/v1alpha1.DNSRecord)
+    * The label selector should match exactly allowing it to be used in different scenarios where we might want a more specific match e.g. kuadrant.io/primary-authoritative-zone-record="api.example.com"
+  *  `provider.DNSZones()` should return all endpoint resources with the configured label selector, transformed into `provider.DNSZone` resources
+    * DNSZone.ID = <endpoint resource>.metadata.name
+    * DNSZone.DNSName = <endpoint resource>.spec.rootHost
+  * `provider.ApplyChanges()` should update the target endpoint resource using the given changes by modifying the `spec.endpoints` slice by applying the creates/updates/deletes and saving the changes.
+    * The correct target DNSRecord should be located using the ZoneID that is already passed along by the controller in `config.ZoneIDFilter.ZoneIDs[0]`
+    * When applying updates we should make sure that the expected previous value matches the current value in the record on cluster to try and avoid (https://github.com/Kuadrant/dns-operator/issues/181)
 
-**Example** CRD Provider secret with optional label selector
+**Example** CRD Provider secret with optional label selector and GVK
 ```yaml
 apiVersion: v1
 kind: Secret
 data:
   CRD_ZONE_RECORD_LABEL: kuadrant.io/primary-authoritative-zone-record
+  ENDPOINT_GVK: kuadrant.io/v1alpha1.DNSRecord
 metadata:
-  name: my-provider-crd-secret
+  name: my-provider-endpoint-secret
   namespace: my-namespace
-type: kuadrant.io/crd
+type: kuadrant.io/endpoint
 ```
 
 ### Make controller cluster aware
