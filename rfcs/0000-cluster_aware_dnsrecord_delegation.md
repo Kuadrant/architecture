@@ -2,8 +2,8 @@
 
 - Feature Name: `cluster_aware_dnsrecord_delegation`
 - Start Date: (fill me in with today's date, YYYY-MM-DD)
-- RFC PR: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/pull/0000)
-- Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
+- RFC PR: [Kuadrant/architecture#127](https://github.com/Kuadrant/architecture/pull/127)
+- Issue tracking: [Kuadrant/architecture#128](https://github.com/Kuadrant/architecture/issues/128)
 
 # Summary
 [summary]: #summary
@@ -40,15 +40,7 @@ This mode should be selected for single cluster scenarios, and/or where the curr
 ### Primary
 
 DNSRecords will be reconciled and published to the provider through an authoritative zone DNSRecord which is created on behalf of the primary DNSRecord with all publishing requests delegated to it.
-The dns operator will ensure the existence of the authoritative zone DNSRecord, with:
-  * the same `metdata.namespace` as the current record
-  * a descriptive generated `metadata.name` i.e. `primary-authoritative-zone-record-<hash>`
-  * the same `spec.rootHost` as the current record
-  * a label that signals it is an authoritative zone record and the `rootHost` (zone dnsName) it's for i.e. `kuadrant.io/primary-authoritative-zone-record=foo.example.com`
-  * an empty `spec.providerRef` relying on the existence of a [default provider secret](#default-provider-secret) having been created in the same namespace.
-
 DNSRecords are not expected to have a `spec.providerRef` and any set will be ignored when reconciled. Internally an instance of the [dnsrecord provider](#dnsrecord-provider) will be loaded with the `CRD_ZONE_RECORD_LABEL` set to `kuadrant.io/primary-authoritative-zone-record=<$spec.RootHost>`.
-
 The above allows a DNSRecord to be reconciled using the created/existing authoritative zone DNSRecord as the target for all updates.
 
 This mode should be selected for multi cluster scenarios where this cluster is a designated "primary" cluster with elevated privileges to access external DNS providers.
@@ -167,8 +159,8 @@ Endpoints from the source are injected into the target "zone" resource endpoints
     * The GVK of the endpoint resources to target should be configurable via data contained in the provider secret (e.g. ENDPOINT_GVK=kuadrant.io/v1alpha1.DNSRecord)
     * The label selector should match exactly allowing it to be used in different scenarios where we might want a more specific match e.g. kuadrant.io/primary-authoritative-zone-record="api.example.com"
   *  `provider.DNSZones()` should return all endpoint resources with the configured label selector, transformed into `provider.DNSZone` resources
-    * DNSZone.ID = <endpoint resource>.metadata.name
-    * DNSZone.DNSName = <endpoint resource>.spec.rootHost
+      * DNSZone.ID = \<endpoint resource\>.metadata.name
+      * DNSZone.DNSName = \<endpoint resource\>.spec.rootHost
   * `provider.ApplyChanges()` should update the target endpoint resource using the given changes by modifying the `spec.endpoints` slice by applying the creates/updates/deletes and saving the changes.
     * The correct target DNSRecord should be located using the ZoneID that is already passed along by the controller in `config.ZoneIDFilter.ZoneIDs[0]`
     * When applying updates we should make sure that the expected previous value matches the current value in the record on cluster to try and avoid (https://github.com/Kuadrant/dns-operator/issues/181)
@@ -223,10 +215,35 @@ rules:
 
 ### Add authoritative record delegation support
 
-ToDO mnairn: Add updated details here
-
 #### Changes required
 
+* Update the DNSRecord API:
+  * add new reason to "Ready" status condition to indicate that it is not ready because all endpoints have been removed from the provider.
+    * `ConditionReasonProviderEndpointsRemoved ConditionReason = "ProviderEndpointsRemoved"`
+* Update deletion logic to only remove the finalizer when a `Ready=false` status condition exists with reason `ProviderEndpointsRemoved`
+* Should only add/remove finalizer from records that are on the current cluster.
+* Add new modes options `--mode=[default|primary|remote]`, default value is "default".
+* When mode is "default" the path through the controller should be as it is today.
+* When mode is "primary":
+  * If record is delegating(TBD, how do we determine this?):
+    * [Option 1] ensure the existence of the authoritative zone DNSRecord, with:
+      * the same `metdata.namespace` as the current record
+      * a descriptive generated `metadata.name` i.e. `primary-authoritative-zone-record-<hash>`
+      * the same `spec.rootHost` as the current record
+      * a label that signals it is an authoritative zone record and the `rootHost` (zone dnsName) it's for i.e. `kuadrant.io/primary-authoritative-zone-record=foo.example.com`
+      * an empty `spec.providerRef` relying on the existence of a [default provider secret](#default-provider-secret) having been created in the same namespace.
+      * With this option we are strictly going to create a record managed by us to add endpoints into, users could still add endpoints to it after creation
+    * [Option 2] continue as normal and only create an authoritative zone DNSRecord (described in [Option1]) if the provider couldn't successfully find one during zone selection i.e. fails with [no zone error](https://github.com/Kuadrant/dns-operator/blob/main/internal/provider/provider.go#L25) `no zone for host`
+      * With this option a user could create their own record ahead of time, maybe they have an existing record they want to add endpoints to?
+    * provider factory should load "endpoint" provider in memory, with configuration:
+      * CRD_ZONE_RECORD_LABEL: kuadrant.io/primary-authoritative-zone-record
+      * ENDPOINT_GVK: kuadrant.io/v1alpha1.DNSRecord
+  * If record is not delegating:
+    * reconcile record as normal, loading the provider as normal
+  * Should process the deletion events, updating the `Ready` condition to false and reason `ProviderEndpointsRemoved` once the provider requests to remove endpoints has been successfully completed and verified as per usual. 
+* When mode is "remote":
+  * Should add a finalizer to records as normal
+  * Should process the deletion events, but only remove the finalizer once the `Ready=false` status exists with reason `ProviderEndpointsRemoved`
 * Allow the dns operator to load controller configuration options from a configMap that optionally exists in the same namespace as the controller. 
 * The configMap should allow env vars that correspond to controller flags to be set and override the value. e.g. `DNS_MODE="primary" == --mode=primary`.
 
@@ -237,7 +254,7 @@ Unlike other providers, this will be the only supported way of achieving multi c
 
 #### Changes required
 
-* Revert the majority of CoreDNS specific logic added to the dns controller, and instead let it follow the nomral reconciliation path.
+* Revert the majority of CoreDNS specific logic added to the dns controller, and instead let it follow the normal reconciliation path.
 * Add a mechanism that allows "labels" to be specified, per provider, that must be ensured on the target DNSRecord resources they are targeting.
 * Add the "kuadrant.io/coredns-zone-name=$rootHost" label to DNSRecords using the CoreDNS provider so that it is picked up directly by the kuadrant coredns plugin.
 * The majority of the `provider` interface will be stubbed out since it no longer needs to do any endpoint manipulation directly, instead relying on the target DNSRecord being in the desired state.
@@ -250,16 +267,19 @@ Unlike other providers, this will be the only supported way of achieving multi c
 [drawbacks]: #drawbacks
 
 * Adds another path through the code that isn't strictly necessary for the majority of providers.
-* A record being added that introduces a failure in the provider request (misconfiguration etc..) will cause multiple clusters endpoints from being updated until the issue is resolved. 
+* A record being added that introduces a failure in the provider request (misconfiguration etc..) will cause multiple clusters endpoints from being updated until the issue is resolved.
+* Creates additional DNSRecord resources on the primary clusters, each Gateway listener would now have two DNSRecord resources created instead of the current one.
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
 The initial idea here was to look at a way to "push" records from multiple "remote" clusters to a central "primary" cluster that would be in charge of combining those records into a single "authoritative" record and ultimately in charge of publishing that record to the provider (CoreDNS). 
 This would require all clusters to have credentials capable of writing to the "primary" cluster.
-
 However, it appears to be a more common pattern in kubernetes projects that deal with multi cluster communication to have the "primary" clusters read from multiple "remote" clusters. 
 This would also only require the "primary" to have read access, or very limited write (status only) access to each cluster.
+
+No new API is being introduced to encapsulate the combined endpoints, instead relying on a DNSRecord resource to hold this information with no additional status being logged about what records are contributing to it.
+Depending on the direction this work takes, it might become apparent that a new resource would make more sense e.g. `DNSZoneRecord` if additional specific status and control flow for these types of endpoint collections are required.
 
 # Prior art
 [prior-art]: #prior-art
@@ -273,4 +293,4 @@ This would also only require the "primary" to have read access, or very limited 
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-* While this is being proposed for the purposes of improving our current CoreDNS solution, there is no reason that this can't be used by any provider and might become a better alternative for multi cluster generally.  
+* While this is being proposed for the purposes of improving our current CoreDNS solution, there is no reason that this can't be used by any provider and might become a better alternative for multi cluster generally.
