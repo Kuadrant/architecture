@@ -13,7 +13,7 @@ Proposal to add functionality to delegate the processing of a DNSRecord to a des
 # Motivation
 [motivation]: #motivation
 
-Multi cluster DNS is currently achieved by using the eventual provider DNS service (AWS Route etc ..) as a store for ownership metadata using specially created TXT records, and as a central API service that all clusters can communicate with.
+Multi cluster DNS is currently achieved by using the eventual provider DNS service (AWS Route53 etc ..) as a store for ownership metadata using specially created TXT records, and as a central API service that all clusters can communicate with.
 Each cluster processes its own DNSRecords, becoming aware of other DNSRecords contributing to the same set of endpoints via this centrally stored data, in turn allowing it to correctly translate the DNSRecord endpoints into an appropriate API operation (Create/Update/Delete) and get to the desired state. 
 
 In some cases, such as our current CoreDNS solution, there is no central off cluster API service that can be configured on all clusters and as such a different approach to multiple cluster discovery and reconciliation is required.
@@ -40,7 +40,7 @@ This mode should be selected for single cluster scenarios, and/or where the curr
 ### Primary
 
 DNSRecords will be reconciled and published to the provider through an authoritative zone DNSRecord which is created on behalf of the primary DNSRecord with all publishing requests delegated to it.
-DNSRecords are not expected to have a `spec.providerRef` and any set will be ignored when reconciled. Internally an instance of the [dnsrecord provider](#dnsrecord-provider) will be loaded with the `CRD_ZONE_RECORD_LABEL` set to `kuadrant.io/primary-authoritative-zone-record=<$spec.RootHost>`.
+DNSRecords are not expected to have a `spec.providerRef` and any set will be ignored when reconciled. Internally an instance of the [endpoint provider](#add-endpoint-provider) will be loaded with the `CRD_ZONE_RECORD_LABEL` set to `kuadrant.io/primary-authoritative-zone-record=<$spec.RootHost>`.
 The above allows a DNSRecord to be reconciled using the created/existing authoritative zone DNSRecord as the target for all updates.
 
 This mode should be selected for multi cluster scenarios where this cluster is a designated "primary" cluster with elevated privileges to access external DNS providers.
@@ -78,8 +78,8 @@ type: Opaque
 
 When configuring clusters to work in multi cluster modes, certain requirements must be met in order for DNSRecords from remote clusters to be considered part of the same record set and ultimately combined into the single "authoritative" DNSRecord on the "primary".
 
-* DNSRecord, and by extension on all other relevant resources Gateways, DNSPolicy etc., must be in a namespace with the same name on both the "primary" and "remote" clusters.
-* Default provider secrets must be in a namespace with the same name on the "primary" and the DNSRecord on the "remote".
+* DNSRecord, and by extension all other relevant resources, Gateways, DNSPolicy etc., must exist in a namespace with the same name on both the "primary" and "remote" clusters.
+* Default provider secrets must exist in a namespace with the same name on the "primary" as the DNSRecord on the "remote".
 
 ## Default Provider Secret
 
