@@ -76,7 +76,7 @@ In a single cluster, you have the Kuadrant control plane and data plane sitting 
 ### Multi-Cluster 
 
 In the default multi-cluster setup. Each individual cluster has Kuadrant installed. Each of these clusters are unaware of the other. They are effectively operating as single clusters. The multi-cluster aspect is created by sharing access with the DNS zone, using a shared host across the clusters and leveraging shared counter storage. 
-The zone is operated on independently by each of DNS operator on both clusters to form a single cohesive record set. More details on this can be found in the [following RFC](https://github.com/Kuadrant/architecture/pull/70).
+Multi cluster DNS is achieved by using the eventual provider DNS service (AWS Route etc ..) as a store for ownership metadata using specially created TXT records, and as a central API service that all clusters can communicate with. The zone is operated on independently by each of DNS operator on both clusters to form a single cohesive record set. Each cluster processes its own DNSRecords, becoming aware of other DNSRecords contributing to the same set of endpoints via this centrally stored data, in turn allowing it to correctly translate the DNSRecord endpoints into an appropriate API operation. More details on this can be found in the [following RFC](https://github.com/Kuadrant/architecture/pull/70).
 The rate limit counters can also be shared and used by different clusters in order to provide global rate limiting. This is achieved by connecting each instance of Limitador to a shared data store that uses the Redis protocol.
 
 ![](./images/multi-cluster-layout.jpg)
