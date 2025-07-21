@@ -253,7 +253,7 @@ sequenceDiagram
 
   %% pre-model-server token rate limiting check
   GW->>GW: Parse model from request body
-  GW->>L: ShouldRateLimit (hits_addend: 0)
+  GW->>L: CheckRateLimit (read only op)
   alt Limit not reached
     L-->>GW: Rate limit OK
   else Limit reached
@@ -270,7 +270,7 @@ sequenceDiagram
   GW->>GW: Parse usage metrics from response body
 
   %% update token usage count via Limitador
-  GW->>L: ShouldRateLimit (hits_addend: func(usage_metrics))
+  GW->>L: ReportRateLimit (hits_addend: func(usage_metrics))
   L-->>GW: Acknowledge token count update
 
   %% final inference response: deliver back to client
