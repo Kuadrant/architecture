@@ -26,7 +26,7 @@ Kuadrant provides connectivity, security and service protection capabilities in 
 
 ### Control Plane Components and Responsibilities
 
-The control plane is a set of controllers and operators that are responsible for for installation and configuration of other components such as the data plane enforcement components and configuration of the Gateway to enable the data plane components to interact with incoming requests. The control plane also owns and reconciles the policy CRD APIs into more complex and specific configuration objects that the policy enforcement components consume in order to know the rules to apply to incoming requests or the configuration to apply to external integrations such as DNS and ACME providers. 
+The control plane is a set of controllers and operators that are responsible for installation and configuration of other components such as the data plane enforcement components and configuration of the Gateway to enable the data plane components to interact with incoming requests. The control plane also owns and reconciles the policy CRD APIs into more complex and specific configuration objects that the policy enforcement components consume in order to know the rules to apply to incoming requests or the configuration to apply to external integrations such as DNS and ACME providers. 
 
 ![](./images/control-plane-overview.jpg)
 
@@ -47,8 +47,8 @@ The control plane is a set of controllers and operators that are responsible for
 * Manages TLS certificates for our components and for the Gateways. Consumes Certificate resources created by Kuadrant operator in response to the TLSPolicy.
 
 #### [DNS Operator](https://github.com/Kuadrant/dns-operator)
-* DNS operator consumes DNSRecord resources that are configured via the DNSPolicy api and applies them into the targeted cloud DNS provider
-AWS, Azure and Google DNS are our main targets
+* DNS operator consumes DNSRecord resources that are configured via the DNSPolicy api and applies them into the targeted cloud DNS provider.
+AWS, Azure and Google DNS are our main targets.
 
 ### Data Plane Components and Responsibilities
 
@@ -60,7 +60,7 @@ The data plane components sit in the request flow and are responsible for enforc
 * Complies with the with Envoy rate limiting API to provide rate limiting to the gateway. Consumes limits from a configmap created based on the RateLimitPolicy API.
 
 #### [Authorino](https://github.com/Kuadrant/authorino)
-* Complies with the Envoy external auth API to provide auth integration to the gateway. It provides both Authn and Authz. Consumes AuthConfigs created by the kuadrant operator based on the defined `AuthPolicy` API.
+* Complies with the Envoy external auth API to provide auth integration to the gateway. It provides both Authn and Authz. Consumes AuthConfigs created by the Kuadrant operator based on the defined `AuthPolicy` API.
 
 #### [WASM Shim](https://github.com/Kuadrant/wasm-shim)
 * Uses the [Proxy WASM ABI Spec](https://github.com/proxy-wasm/spec) to integrate with Envoy and provide filtering and connectivity to Limitador (for request time enforcement of rate limiting) and Authorino (for request time enforcement of authentication & authorization).
@@ -68,14 +68,14 @@ The data plane components sit in the request flow and are responsible for enforc
 
 ### Single Cluster Layout 
 
-In a single cluster, you have the Kuadrant control plane and data plane sitting together. It is configured to integrate with Gateways on the same cluster and configure a DNS zone via a DNS provider secret (configured alongside a DNSPolicy). Storage of rate limit counters is possible but not required as they are not being shared.
+In a single cluster, you have the Kuadrant control plane and data plane sitting together. It is configured to integrate with Gateways on the same cluster and configure a DNS zone via a  secret (configured alongside a DNSPolicy). Storage of rate limit counters is possible but not required as they are not being shared.
 
 ![](./images/single-cluster-layout.jpg)
 
 
 ### Multi-Cluster 
 
-In the default multi-cluster setup. Each individual cluster has Kuadrant installed. Each of these clusters are unaware of the other. They are effectively operating as single clusters. The multi-cluster aspect is created by sharing access with the DNS zone, using a shared host across the clusters and leveraging shared counter storage. 
+In the default multi-cluster setup, each individual cluster has Kuadrant installed. Each of these clusters are unaware of the other. They are effectively operating as single clusters. The multi-cluster aspect is created by sharing access with the DNS zone, using a shared host across the clusters and leveraging shared counter storage. 
 Multi cluster DNS is achieved by using the eventual provider DNS service (AWS Route etc ..) as a store for ownership metadata using specially created TXT records, and as a central API service that all clusters can communicate with. The zone is operated on independently by each of DNS operator on both clusters to form a single cohesive record set. Each cluster processes its own DNSRecords, becoming aware of other DNSRecords contributing to the same set of endpoints via this centrally stored data, in turn allowing it to correctly translate the DNSRecord endpoints into an appropriate API operation. More details on this can be found in the [following RFC](https://github.com/Kuadrant/architecture/pull/70).
 The rate limit counters can also be shared and used by different clusters in order to provide global rate limiting. This is achieved by connecting each instance of Limitador to a shared data store that uses the Redis protocol.
 
