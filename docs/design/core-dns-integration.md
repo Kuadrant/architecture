@@ -41,7 +41,7 @@ Example CoreFile:
 
 ```
 
-As is the case now, each cluster will also have Kaudrant running and so an instance of DNS Operator installed. It will be the responsibility of the DNS Operator to build a "merged" DNSRecord based on the response for the `kdrnt` tld from each Core DNS acting as an authoritative nameserver for a given host ultimately specified via a gateway listener host. 
+As is the case now, each cluster will also have Kuadrant running and so an instance of DNS Operator installed. It will be the responsibility of the DNS Operator to build a "merged" DNSRecord based on the response for the `kdrnt` tld from each Core DNS acting as an authoritative nameserver for a given host ultimately specified via a gateway listener host. 
 
 In order to have the DNS records managed by Core DNS made available to external client, it is expected that a recursive "edge" DNS provider will need to delegate the zone(s) and set the Core DNS instances as the nameservers to use for those zones. This recursive DNS server could be a cloud provider or a in house solution.
 
@@ -61,18 +61,18 @@ data:
 
 When the DNS Operator sees a DNSRecord that has been configured with a core dns provider secret, it will look to setup two additional records. Each of these records will be owned by the original and so cleaned up when the original is deleted:
 
-1) A DNSRecord with the endpoints to bring traffic to the local gateway. This DNSRecord is the "gateway local" copy and the DNSOperator will set this up with a root domain that matches the original DNSRecord but append the `kdrnt` TLD. In addition this record will be no weighting or geo provider specific meta-data. Instead these will be represented as TXT records. This is so they can be queried via a DNS query and used to form a complete DNS response for the original host from any Core DNS instance; it is these records that other DNS Operator instances will be querying in order to build a full record set and any GEO or Weighting configuration for a given dns name.
+1) A DNSRecord with the endpoints to bring traffic to the local gateway. This DNSRecord is the "gateway local" copy and the DNSOperator will set this up with a root domain that matches the original DNSRecord but append the `kdrnt` TLD. In addition this record will have no weighting or geo provider specific meta-data. Instead these will be represented as TXT records. This is so they can be queried via a DNS query and used to form a complete DNS response for the original host from any Core DNS instance; it is these records that other DNS Operator instances will be querying in order to build a full record set and any GEO or Weighting configuration for a given dns name.
 
 2) A DNSRecord that is the product of merging each of the configured authoritative nameservers records for the gateway listener under the `kdrnt` TLD (including the weighting and geo txt records). As well as having all the available records, this DNSRecord will also have the configured GEO and weighting data set in the provider specific section of the endpoint spec.  The kuadrant plugin will read these DNSRecords and apply the GEO and Weighted configuration when serving back the DNS response for a query relating to the original gateway listener host.
 
 
-#### CoreDNS Kaudrant Plugin
+#### CoreDNS Kuadrant Plugin
 
-The CoreDNS kuadrant plugin follows the [Core DNS plugin](https://coredns.io/manual/plugins/) model. It sets up watch and listers on kuadrant's DNSRecord resources in the k8s cluster and as it discovers them processes them and adds the endpoints to the appropriate DNS zone with the correct GEO and Weighted data.
+The CoreDNS Kuadrant plugin follows the [Core DNS plugin](https://coredns.io/manual/plugins/) model. It sets up watch and listers on kuadrant's DNSRecord resources in the k8s cluster and as it discovers them processes them and adds the endpoints to the appropriate DNS zone with the correct GEO and Weighted data.
 
 **Weighting**
 
-For weighted responses, the Kaudrant plugin builds a list of all the available records that could be provided as the answer to a given query from within the identified zone. It then applies a weighting algorithm to decide on a single response depending on the individual record weighting. It is effectively decided each time based on a random number between 0 and the sum of all the weights. So it is not a super predictable response but is a correctly weighted response.
+For weighted responses, the Kuadrant plugin builds a list of all the available records that could be provided as the answer to a given query from within the identified zone. It then applies a weighting algorithm to decide on a single response depending on the individual record weighting. It is effectively decided each time based on a random number between 0 and the sum of all the weights. So it is not a super predictable response but is a correctly weighted response.
 
 **GEO**
 
@@ -84,7 +84,7 @@ It can be the case that you have multiple endpoints within a single GEO and want
 
 #### kdrnt TLD
 
-In order to make the "gateway local" records available to each other location without applying any weighting or geo data, each Core DNS instance also serves a zone for `kdrnt`. This zone is unique to the kaudrant needs and is only used for look up purposes by each instance of the DNS Operator in order to build a full picture of all of the available dns endpoints for given host.
+In order to make the "gateway local" records available to each other location without applying any weighting or geo data, each Core DNS instance also serves a zone for `kdrnt`. This zone is unique to the Kuadrant needs and is only used for look up purposes by each instance of the DNS Operator in order to build a full picture of all of the available dns endpoints for given host.
 
 **Example:**
 ```
