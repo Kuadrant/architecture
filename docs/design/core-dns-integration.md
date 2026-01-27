@@ -1,96 +1,125 @@
-### Core DNS Integration
+# CoreDNS Integration
 
+With DNSPolicy, Kuadrant allows users to have their DNS managed automatically based on the gateways they define and the provider they configure. This DNS integration has traditionally been focused on cloud DNS providers (AWS Route53, Google Cloud DNS, Azure DNS). Some users do not use cloud DNS providers or want to limit their exposure to cloud providers, instead opting for something fully self-managed or a hybrid model where the zone is delegated to DNS servers running within their own infrastructure.
 
-With DNSPolicy, Kuadrant allows users to have their DNS managed automatically based on the gateways they define, and the provider they configure. This DNS integration, is focused solely on having all of your records stored in a cloud DNS providers. Some users do not use cloud DNS providers or want to limit their exposure to cloud providers instead opting for something fully self managed or a hybrid model where the zone is delegated to DNS servers running within their own infrastructure.
+## Overview
 
+To provide integration with CoreDNS, Kuadrant extends the DNS Operator and provides a Kuadrant [CoreDNS plugin](https://coredns.io/manual/plugins/) that sources records from the `kuadrant.io/v1alpha1/DNSRecord` resource and applies GEO and weighted response capabilities equivalent to what is provided by the various cloud DNS providers we support. There are no changes to the DNSPolicy API and no needed changes to the Kuadrant policy controllers. This integration is isolated to the DNS Operator and the new CoreDNS plugin.
 
-### Overview
-
-To provide integration with Core DNS, we will add changes to the DNS Operator and also develop a kuadrant [Core DNS plugin](https://coredns.io/manual/plugins/) that will source records from the `kuadrant.io/DNSRecord` resource and will be responsible for applying a GEO and weighted response equivalent to what is provided by the various cloud DNS providers we support. There will be no changes to the DNSPolicy API and no needed changes to the kuadrant policy controllers. This integration will be isolated to the DNS Operator and the new plugin.
-
-#### Architecture
+## Architecture
 
 ![Architecture](./images/core-dns.png)
 
-It is expected that each cluster will have an instance of Core DNS with the kuadrant plugin compiled in via the plugin mechanism. We will provide a reference image that will be used for testing. 
+The CoreDNS integration supports both single-cluster and multi-cluster deployments:
 
-The kuadrant plug-in will need to be enabled by the user for zones that will be handed by this Core DNS instance via the [core file](https://coredns.io/2017/07/23/corefile-explained/). These should be zones that will be used for holding the records for the gateway listener hostnames. In addition we will expect a `kdrnt` zone to always be defined as we will be adding specific "gateway local" records with a `.kdrnt` tld (more below).
+### Single Cluster Model
 
-Example CoreFile:
+A single cluster runs both DNS Operator and CoreDNS with the Kuadrant plugin. DNSRecords are created with a provider reference pointing to a CoreDNS provider secret. The CoreDNS plugin watches for DNSRecords labeled with the appropriate zone name and serves them directly.
+
+This model is suitable for organizations that want to self-host their DNS infrastructure without the complexity of multi-cluster coordination.
+
+### Multi-Cluster Delegation Model
+
+Multiple clusters can participate in serving a single DNS zone through a delegation model that enables geographic distribution and high availability:
+
+- **Primary clusters**: Run both DNS Operator and CoreDNS. They reconcile delegating DNSRecords from all clusters into authoritative DNSRecords served by their CoreDNS instances.
+- **Secondary clusters**: Run DNS Operator only. They create delegating DNSRecords but do not interact with DNS providers directly.
+
+This model enables workloads across multiple clusters to contribute DNS endpoints to a unified zone, with primary clusters maintaining the authoritative view. Each primary cluster can independently serve the complete record set, providing both high availability and geographic distribution of DNS services.
+
+## Key Design Decisions
+
+### Zone Labeling Mechanism
+
+Rather than requiring CoreDNS to watch all DNSRecords in the cluster, the integration uses a label-based filtering mechanism. The DNS Operator applies a zone-specific label (`kuadrant.io/coredns-zone-name`) to DNSRecords when they are reconciled. The CoreDNS plugin watches only for DNSRecords with labels matching its configured zones, reducing resource overhead and providing clear zone boundaries.
+
+### GEO and Weighted Routing
+
+The CoreDNS Kuadrant plugin implements GEO and weighted routing using the same algorithmic approach as cloud providers:
+
+- **GEO routing**: Uses geo database integration (via CoreDNS geoip plugin) to return region-specific endpoints
+- **Weighted routing**: Applies probabilistic selection based on endpoint weights
+- **Combined routing**: First applies GEO filtering, then weighted selection within the matched region
+
+This provides parity with cloud DNS provider capabilities while maintaining full control over the DNS infrastructure.
+
+## Deployment Scenarios
+
+### Scenario 1: Single Cluster with CoreDNS
+
+A single Kubernetes cluster runs both DNS Operator and CoreDNS. Users create DNSRecords pointing to the CoreDNS provider secret. CoreDNS serves the records directly.
 
 ```
- 
-    kdrnt {
-        debug
-        errors
-        log
-        kuadrant
-        prometheus 0.0.0.0:9153
-    }
-    k.example.com {
-        debug
-        errors
-        log
-        geoip GeoLite2-City-demo.mmdb {
-            edns-subnet
-        }
-        metadata
-        kuadrant
-        prometheus 0.0.0.0:9153
-    }
-
+┌─────────────────────────────┐
+│   Kubernetes Cluster        │
+│  ┌──────────────────────┐   │
+│  │   DNS Operator       │   │
+│  └──────────────────────┘   │
+│  ┌──────────────────────┐   │
+│  │   CoreDNS            │   │
+│  │   + Kuadrant Plugin  │   │
+│  └──────────────────────┘   │
+│  ┌──────────────────────┐   │
+│  │   DNSRecords         │   │
+│  │   (labeled)          │   │
+│  └──────────────────────┘   │
+└─────────────────────────────┘
+          │
+          ▼
+   External DNS Queries
 ```
 
-As is the case now, each cluster will also have Kaudrant running and so an instance of DNS Operator installed. It will be the responsibility of the DNS Operator to build a "merged" DNSRecord based on the response for the `kdrnt` tld from each Core DNS acting as an authoritative nameserver for a given host ultimately specified via a gateway listener host. 
+### Scenario 2: Multi-Cluster with 2 Primary + 1 Secondary
 
-In order to have the DNS records managed by Core DNS made available to external client, it is expected that a recursive "edge" DNS provider will need to delegate the zone(s) and set the Core DNS instances as the nameservers to use for those zones. This recursive DNS server could be a cloud provider or a in house solution.
-
-
-#### Core DNS DNSProvider
-
-We will re-use the existing concept of a `DNSProvider` in order to configure the DNS Operator. This DNSProvider will have a type of `kuadrant.io/coredns` which is in line with how other provider secrets are distinguished. The Core DNS provider secret, rather than holding credentials, will instead hold the locations of all the authoritative nameservers for a given set of domains. It will also have the zones that are handled being handled by Core DNS. This provider secret is configured by the user.
+Two primary clusters run CoreDNS and reconcile delegating DNSRecords from all three clusters. The secondary cluster creates delegating DNSRecords but doesn't run CoreDNS. Each primary cluster independently serves the complete authoritative record set.
 
 ```
-type: kuadrant.io/coredns
-data:
-  NAMESERVERS: 10.22.100.23:53,10.22.100.24:53
-  ZONES: k.example.com, k2.example.com
+┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│ Primary Cluster 1│    │ Primary Cluster 2│    │Secondary Cluster │
+│                  │    │                  │    │                  │
+│ DNS Operator     │◄───┤ DNS Operator     │◄───┤ DNS Operator     │
+│ (primary)        │───►│ (primary)        │───►│ (secondary)      │
+│                  │    │                  │    │                  │
+│ CoreDNS          │    │ CoreDNS          │    │ (no CoreDNS)     │
+│                  │    │                  │    │                  │
+│ DNSRecords       │    │ DNSRecords       │    │ DNSRecords       │
+│ - Delegating     │    │ - Delegating     │    │ - Delegating     │
+│ - Authoritative  │    │ - Authoritative  │    │                  │
+└──────────────────┘    └──────────────────┘    └──────────────────┘
+         │                       │
+         ▼                       ▼
+    External DNS Queries    External DNS Queries
 ```
 
-##### DNS Operator
+## Integration Points
 
-When the DNS Operator sees a DNSRecord that has been configured with a core dns provider secret, it will look to setup two additional records. Each of these records will be owned by the original and so cleaned up when the original is deleted:
+### DNS Operator
 
-1) A DNSRecord with the endpoints to bring traffic to the local gateway. This DNSRecord is the "gateway local" copy and the DNSOperator will set this up with a root domain that matches the original DNSRecord but append the `kdrnt` TLD. In addition this record will be no weighting or geo provider specific meta-data. Instead these will be represented as TXT records. This is so they can be queried via a DNS query and used to form a complete DNS response for the original host from any Core DNS instance; it is these records that other DNS Operator instances will be querying in order to build a full record set and any GEO or Weighting configuration for a given dns name.
+The DNS Operator is extended to support CoreDNS as a provider type (`kuadrant.io/coredns`). When reconciling DNSRecords with a CoreDNS provider:
 
-2) A DNSRecord that is the product of merging each of the configured authoritative nameservers records for the gateway listener under the `kdrnt` TLD (including the weighting and geo txt records). As well as having all the available records, this DNSRecord will also have the configured GEO and weighting data set in the provider specific section of the endpoint spec.  The kuadrant plugin will read these DNSRecords and apply the GEO and Weighted configuration when serving back the DNS response for a query relating to the original gateway listener host.
+- **Single cluster**: Applies zone labels to DNSRecords for the CoreDNS plugin to watch
+- **Multi-cluster delegation**: Reads delegating DNSRecords from connected clusters, merges endpoints, and creates authoritative DNSRecords with zone labels
 
+The operator distinguishes between primary and secondary roles to determine whether it should reconcile delegating records into authoritative records.
 
-#### CoreDNS Kaudrant Plugin
+### CoreDNS Plugin
 
-The CoreDNS kuadrant plugin follows the [Core DNS plugin](https://coredns.io/manual/plugins/) model. It sets up watch and listers on kuadrant's DNSRecord resources in the k8s cluster and as it discovers them processes them and adds the endpoints to the appropriate DNS zone with the correct GEO and Weighted data.
+The CoreDNS plugin integrates with Kubernetes to serve DNSRecords as DNS responses:
 
-**Weighting**
+- Watches DNSRecords with zone-specific labels
+- Extracts endpoints and routing metadata (GEO codes, weights)
+- Applies routing logic to DNS queries based on client location and endpoint weights
+- Leverages existing CoreDNS plugins (geoip, metadata) for supporting functionality
 
-For weighted responses, the Kaudrant plugin builds a list of all the available records that could be provided as the answer to a given query from within the identified zone. It then applies a weighting algorithm to decide on a single response depending on the individual record weighting. It is effectively decided each time based on a random number between 0 and the sum of all the weights. So it is not a super predictable response but is a correctly weighted response.
+### Cluster Interconnection
 
-**GEO**
+Multi-cluster delegation requires primary clusters to read DNSRecords from other clusters. This is achieved through kubeconfig-based cluster interconnection secrets that grant read access to DNSRecord resources across clusters. This approach reuses Kubernetes RBAC rather than introducing a separate authentication mechanism.
 
-GEO data is sourced from a geo database such as MaxMind. This is then made available via the existing [GEO plugin](https://coredns.io/plugins/geoip/) from CoreDNS. This plugin must execute before the Kuadrant plugin in order for GEO based responses to be provided. With this plugin enabled, Kuadrant can use the GEO data to decide which record to return to the DNS query.
+## Implementation References
 
-**Weighting within a GEO**
+For detailed implementation guidance, configuration examples, and operational procedures, see:
 
-It can be the case that you have multiple endpoints within a single GEO and want to weight traffic across those endpoints. In this case the Kuadrant plugin will first apply the GEO filter and then use the weighting filter on the result if there is more than one endpoint within a given GEO.
-
-#### kdrnt TLD
-
-In order to make the "gateway local" records available to each other location without applying any weighting or geo data, each Core DNS instance also serves a zone for `kdrnt`. This zone is unique to the kaudrant needs and is only used for look up purposes by each instance of the DNS Operator in order to build a full picture of all of the available dns endpoints for given host.
-
-**Example:**
-```
-Gateway:
-  Listener:
-     Host: k.example.com
-```
-
-A local record is set up for `k.example.com.kdrnt`. It is this domain that is requested from the DNS Operator instances. Effectively each DNS Operator queries each nameserver it has been configured with via the DNSProvider secret something equivilant to `dig @nameserver k.example.com.kdrnt`. The response from each nameserver is then merged into a single `k.example.com` DNSRecord and served via the CoreDNS plugin. This means each Core DNS instance can serve a valid response for a query for `k.example.com`.
+- **Integration Guide**: [CoreDNS Integration Guide](https://github.com/Kuadrant/kuadrant-operator/blob/main/doc/overviews/coredns-integration.md) - Production deployment and multi-cluster setup
+- **Local Development Guide**: [Local testing with Kind clusters](https://github.com/Kuadrant/dns-operator/blob/main/docs/coredns/README.md)
+- **Provider Configuration**: [CoreDNS provider secret setup](https://github.com/Kuadrant/dns-operator/blob/main/docs/provider.md)
+- **CoreDNS Plugin**: [Plugin source code and syntax reference](https://github.com/Kuadrant/dns-operator/blob/main/coredns/plugin/README.md)
