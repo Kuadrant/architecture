@@ -1,10 +1,12 @@
 # CoreDNS Integration
 
-With DNSPolicy, Kuadrant allows users to have their DNS managed automatically based on the gateways they define and the provider they configure. This DNS integration has traditionally been focused on cloud DNS providers (AWS Route53, Google Cloud DNS, Azure DNS). Some users do not use cloud DNS providers or want to limit their exposure to cloud providers, instead opting for something fully self-managed or a hybrid model where the zone is delegated to DNS servers running within their own infrastructure.
+With DNSPolicy, you can have your DNS managed automatically based on the gateways you define and the provider you configure. This DNS integration has traditionally been focused on cloud DNS providers (AWS Route53, Google Cloud DNS, Azure DNS).
+
+If you do not use cloud DNS providers or want to limit your exposure to cloud providers, you can opt for something fully self-managed or a hybrid model where the zone is delegated to DNS servers running within your own infrastructure.
 
 ## Overview
 
-To provide integration with CoreDNS, Kuadrant extends the DNS Operator and provides a Kuadrant [CoreDNS plugin](https://coredns.io/manual/plugins/) that sources records from the `kuadrant.io/v1alpha1/DNSRecord` resource and applies GEO and weighted response capabilities equivalent to what is provided by the various cloud DNS providers we support. There are no changes to the DNSPolicy API and no needed changes to the Kuadrant policy controllers. This integration is isolated to the DNS Operator and the new CoreDNS plugin.
+To provide integration with CoreDNS, Kuadrant extends the DNS Operator and provides a Kuadrant [CoreDNS plugin](https://coredns.io/manual/plugins/) that sources records from the `kuadrant.io/v1alpha1/DNSRecord` resource and applies GEO and weighted response capabilities equivalent to what is provided by the various cloud DNS providers we support. There are no changes to the DNSPolicy API and no needed changes to the Kuadrant policy controllers. This integration is isolated to the DNS Operator and the CoreDNS plugin.
 
 ## Architecture
 
@@ -37,11 +39,11 @@ Rather than requiring CoreDNS to watch all DNSRecords in the cluster, the integr
 
 The CoreDNS Kuadrant plugin implements GEO and weighted routing using the same algorithmic approach as cloud providers:
 
-- **GEO routing**: Uses geo database integration (via CoreDNS geoip plugin) to return region-specific endpoints
+- **GEO routing**: Uses geographical-database integration (with the CoreDNS `geoip` plugin) to return region-specific endpoints
 - **Weighted routing**: Applies probabilistic selection based on endpoint weights
 - **Combined routing**: First applies GEO filtering, then weighted selection within the matched region
 
-This provides parity with cloud DNS provider capabilities while maintaining full control over the DNS infrastructure.
+This approach provides parity with cloud DNS provider capabilities while maintaining full control over the DNS infrastructure.
 
 ## Deployment Scenarios
 
@@ -71,7 +73,7 @@ A single Kubernetes cluster runs both DNS Operator and CoreDNS. Users create DNS
 
 ### Scenario 2: Multi-Cluster with 2 Primary + 1 Secondary
 
-Two primary clusters run CoreDNS and reconcile delegating DNSRecords from all three clusters. The secondary cluster creates delegating DNSRecords but doesn't run CoreDNS. Each primary cluster independently serves the complete authoritative record set.
+Two primary clusters run CoreDNS and reconcile delegating DNSRecords from all three clusters. Each primary cluster independently serves the complete authoritative record set. The secondary cluster creates delegating DNSRecords but does not run CoreDNS.
 
 ```
 ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
@@ -97,10 +99,10 @@ Two primary clusters run CoreDNS and reconcile delegating DNSRecords from all th
 
 The DNS Operator is extended to support CoreDNS as a provider type (`kuadrant.io/coredns`). When reconciling DNSRecords with a CoreDNS provider:
 
-- **Single cluster**: Applies zone labels to DNSRecords for the CoreDNS plugin to watch
-- **Multi-cluster delegation**: Reads delegating DNSRecords from connected clusters, merges endpoints, and creates authoritative DNSRecords with zone labels
+- **Single cluster**: The DNS Operator applies zone labels to DNSRecords for the CoreDNS plugin to watch
+- **Multi-cluster delegation**: The DNS Operator reads delegating DNSRecords from connected clusters, merges endpoints, and creates authoritative DNSRecords with zone labels
 
-The operator distinguishes between primary and secondary roles to determine whether it should reconcile delegating records into authoritative records.
+The DNS Operator distinguishes between primary and secondary roles to determine whether it should reconcile delegating records into authoritative records.
 
 ### CoreDNS Plugin
 
