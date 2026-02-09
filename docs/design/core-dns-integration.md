@@ -10,7 +10,6 @@ To provide integration with CoreDNS, Kuadrant extends the DNS Operator and provi
 
 ## Architecture
 
-![Architecture](./images/core-dns.png)
 
 The CoreDNS integration supports both single-cluster and multi-cluster deployments:
 
@@ -99,8 +98,10 @@ Two primary clusters run CoreDNS and reconcile delegating DNSRecords from all th
 
 The DNS Operator is extended to support CoreDNS as a provider type (`kuadrant.io/coredns`). When reconciling DNSRecords with a CoreDNS provider:
 
-- **Single cluster**: The DNS Operator applies zone labels to DNSRecords for the CoreDNS plugin to watch
-- **Multi-cluster delegation**: The DNS Operator reads delegating DNSRecords from connected clusters, merges endpoints, and creates authoritative DNSRecords with zone labels
+In both single-cluster and multi-cluster scenarios, the DNS Operator creates an authoritative DNSRecord with zone labels for the CoreDNS plugin to watch and serve. The key difference lies in how this authoritative record is populated:
+
+- **Single cluster**: The authoritative DNSRecord contains endpoints from the single cluster
+- **Multi-cluster delegation**: The authoritative DNSRecord is created by reading and merging delegating DNSRecords from all connected clusters
 
 The DNS Operator distinguishes between primary and secondary roles to determine whether it should reconcile delegating records into authoritative records.
 
