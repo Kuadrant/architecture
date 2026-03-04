@@ -88,7 +88,7 @@ spec:
 - No controller logic changes required (Authorino itself handles the certificate extraction)
 
 ### Kuadrant Operator
-- Update the AuthPolicy CRD to expose the new `authentication.x509.source` field
+- Update the AuthPolicy CRD to expose the new `authentication.x509.source` field – i.e., upgrade the version of the embedded AuthConfig types to one that includes the new field
 - Update the AuthPolicy-to-AuthConfig translation logic to propagate the `source` configuration
 - No changes to the wasm-shim required (certificate extraction happens entirely at the Authorino layer)
 
