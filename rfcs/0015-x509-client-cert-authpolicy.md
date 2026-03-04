@@ -233,7 +233,7 @@ type X509CertificateSource struct {
 The AuthPolicy CRD mirrors the AuthConfig changes:
 
 ```yaml
-apiVersion: kuadrant.io/v2beta3
+apiVersion: kuadrant.io/v1
 kind: AuthPolicy
 metadata:
   name: my-auth-policy
@@ -303,7 +303,7 @@ spec:
 **Repository**: https://github.com/Kuadrant/kuadrant-operator
 
 **Changes**:
-1. **AuthPolicy CRD** (`api/v2beta3/authpolicy_types.go`):
+1. **AuthPolicy CRD** (`api/v1/authpolicy_types.go`):
    - Mirror the new `X509CertificateSource` types from Authorino
    - Update CRD manifests
 
