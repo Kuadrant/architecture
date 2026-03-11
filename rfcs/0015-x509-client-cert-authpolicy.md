@@ -28,6 +28,8 @@ Enable X.509 client certificate authentication in Kuadrant's AuthPolicy by exten
 - Prescribing a specific method for configuring proxy-level TLS client certificate validation (users choose based on their Gateway API provider and version)
 - Custom certificate validation logic beyond what Authorino already provides
 - Certificate revocation checking (CRL/OCSP) - this remains the responsibility of the gateway proxy or Authorino's existing capabilities
+- **Server-side TLS configuration**: This RFC addresses only the client certificate validation aspect of mTLS (client authenticating to server). Server-side TLS (TLS termination at gateway listeners, TLS passthrough) continues to be handled by existing Gateway API configuration and is not part of this proposal.
+- **Gateway-to-Authorino TLS/mTLS**: Securing the communication channel between the gateway and Authorino (whether plain HTTP, TLS, or mTLS) remains controlled via existing configuration options in the Kuadrant and Authorino CRs and is out of scope for this RFC.
 
 # Problem Statement
 
