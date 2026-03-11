@@ -642,7 +642,6 @@ Documentation must explicitly warn users:
 
 1. **API Design**:
    - Finalize `X509CertificateSource` struct design
-   - Review with maintainers
    - Update API documentation
 
 2. **Implementation**:
@@ -1143,7 +1142,6 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
 2. **API Versioning**:
    - [ ] Should the new `source` field be added to Authorino v1beta3 or require a new v1beta4?
    - [ ] Recommendation: Add to v1beta3 as optional field (backward compatible)
-   - [ ] Get maintainer approval
 
 3. **Certificate Chain Handling**:
    - [ ] How should Authorino handle certificate chains in XFCC?
