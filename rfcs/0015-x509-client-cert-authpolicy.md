@@ -7,50 +7,60 @@
 
 # Summary
 
-Enable X.509 client certificate authentication in Kuadrant's AuthPolicy by allowing Authorino to extract client certificates from the X-Forwarded-Client-Cert (XFCC) header and leverage Gateway API v1.5's standardized frontend TLS validation configuration for mTLS termination at the gateway level.
+Enable X.509 client certificate authentication in Kuadrant's AuthPolicy by extending Authorino's AuthConfig API to extract client certificates from the X-Forwarded-Client-Cert (XFCC) header. This allows users to leverage Authorino's native x509 authentication features (multi-CA trust, certificate selection via label selectors) in Kuadrant deployments, replacing existing workarounds.
 
 # Goals
 
 - Support X.509 client certificate authentication in Kuadrant AuthPolicy, making the inherited API from Authorino's AuthConfig functionally operational in Kuadrant deployments
-- Provide a vendor-agnostic solution using Gateway API v1.5 standard features (instead of Istio-specific EnvoyFilter resources)
 - Enable Authorino to extract and validate client certificates from the XFCC header populated by the proxy
+- Allow users to leverage Authorino's native x509 authentication features, particularly:
+  - Multi-CA trust via label selectors (vs. single root CA in proxy configuration)
+  - Fine-grained certificate selection and validation
+  - Integration with Kubernetes Secret resources for trusted CAs
 - Allow users to configure which HTTP header contains the client certificate (defaulting to X-Forwarded-Client-Cert)
 - Maintain backward compatibility with existing AuthConfig/AuthPolicy configurations
-- Eliminate the need for manual workarounds involving OPA Rego policies and anonymous authentication
+- Eliminate the need for OPA-based workarounds that bypass Authorino's authentication phase
 
 # Non-goals
 
 - Support for certificate extraction directly from the TLS connection attributes in the wasm-shim (blocked by current technical limitations)
 - Automatic injection of CA certificates into Gateway resources (this may be addressed in future iterations)
-- Support for Gateway API versions prior to v1.4 (feature was Experimental before v1.5)
+- Prescribing a specific method for configuring proxy-level TLS client certificate validation (users choose based on their Gateway API provider and version)
 - Custom certificate validation logic beyond what Authorino already provides
-- Certificate revocation checking (CRL/OCSP) - this remains the responsibility of the gateway proxy
+- Certificate revocation checking (CRL/OCSP) - this remains the responsibility of the gateway proxy or Authorino's existing capabilities
 
 # Problem Statement
 
-Kuadrant's AuthPolicy API inherits the `authentication.x509` configuration from Authorino's AuthConfig CRD, creating the misleading appearance that X.509 client certificate authentication is supported in Kuadrant. However, this feature is non-functional in practice due to two critical gaps:
+Kuadrant's AuthPolicy API inherits the `authentication.x509` configuration from Authorino's AuthConfig CRD, creating the misleading appearance that X.509 client certificate authentication is supported in Kuadrant. However, this feature is non-functional in practice due to a critical technical limitation:
 
-1. **Gateway TLS Configuration Gap**: Kuadrant does not configure the gateway listeners with TLS client certificate validation settings, meaning the gateway never requests or validates client certificates during the TLS handshake.
+**Certificate Propagation Gap**: The wasm-shim cannot read the client certificate in PEM format from the TLS connection attributes, preventing it from populating the `attributes.source.certificate` field in the external authorization CheckRequest to Authorino.
 
-2. **Certificate Propagation Gap**: The wasm-shim cannot read the client certificate in PEM format from the TLS connection attributes, preventing it from populating the `attributes.source.certificate` field in the external authorization CheckRequest to Authorino.
-
-As a result, users attempting to use `spec.rules.authentication.x509` in their AuthPolicy resources find that authentication fails because Authorino never receives the client certificate data.
+As a result, users attempting to use `spec.rules.authentication.x509` in their AuthPolicy resources find that authentication fails because Authorino never receives the client certificate data, even when the proxy is properly configured to perform TLS client certificate validation.
 
 ## Current Workaround
 
 The temporary workaround documented in issue #140 involves:
-- Manually configuring TLS context validation in gateway listeners using Gateway API provider-specific resources (e.g. Istio EnvoyFilter)
-- Using `anonymous` authentication in AuthPolicy
-- Creating OPA Rego authorization policies that parse and validate certificates from the XFCC header
-- Manually managing CA certificate ConfigMaps and updating gateway configurations
+- Configuring TLS client certificate validation in the gateway proxy (using Gateway API provider-specific resources like Istio EnvoyFilter or Gateway API's `spec.tls.frontend.default.validation` in v1.5+)
+- **Skipping the authentication phase entirely** by using `anonymous` authentication in AuthPolicy
+- **Using OPA Rego authorization policies** to manually parse and validate certificates from the XFCC header
+- Managing CA certificate ConfigMaps
 
-This workaround is fragile, vendor-specific (Istio, Envoy Gateway), and requires deep knowledge of Envoy configuration.
+## Main Pain Point
+
+The critical problem with this workaround is not the proxy configuration method—it's that **users cannot leverage Authorino's native x509 authentication features**:
+
+- **Loss of multi-CA trust**: Authorino's x509 authentication supports trusting multiple intermediate CAs via label selectors, enabling fine-grained certificate revocation and trust management. The workaround points users to configure a single root CA in the proxy, losing this flexibility.
+- **Complexity**: Users must implement certificate parsing and validation logic in OPA Rego instead of using Authorino's built-in, well-tested x509 authenticator.
+- **Inconsistency**: The `authentication.x509` API exists but doesn't work, creating a confusing user experience.
+- **Fragility**: OPA policies for certificate validation are custom code that must be maintained separately from the standard AuthPolicy configuration.
 
 # Proposed Solution
 
-The solution consists of three coordinated changes across the Kuadrant ecosystem:
+The solution is to extend Authorino's AuthConfig API to support extracting client certificates from HTTP headers (specifically the XFCC header), and propagate this capability to Kuadrant's AuthPolicy. This allows users to leverage Authorino's native x509 authentication features when certificates are forwarded via XFCC.
 
-## 1. Extend Authorino's AuthConfig API
+## Core API Extension
+
+### Extend Authorino's AuthConfig API
 
 Add a new field to the `authentication.x509` configuration to specify the source of the client certificate:
 
@@ -81,20 +91,24 @@ spec:
 - The XFCC header format follows the [Envoy specification](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-client-cert)
 - Certificate validation (leaf maps to a trusted CA) remains unchanged once the certificate is extracted
 
-## 2. Propagate API Changes Through the Stack
+### Propagate API Changes Through the Stack
 
-### Authorino Operator
+**Authorino Operator:**
 - Update the AuthConfig CRD manifests hosted in the authorino-operator repository to include the new `source` field
 - No controller logic changes required (Authorino itself handles the certificate extraction)
 
-### Kuadrant Operator
+**Kuadrant Operator:**
 - Update the AuthPolicy CRD to expose the new `authentication.x509.source` field – i.e., upgrade the version of the embedded AuthConfig types to one that includes the new field
 - Update the AuthPolicy-to-AuthConfig translation logic to propagate the `source` configuration
 - No changes to the wasm-shim required (certificate extraction happens entirely at the Authorino layer)
 
-## 3. Gateway TLS Configuration via Gateway API
+## Proxy Configuration for XFCC Header Population
 
-Instead of using provider-specific resources to configure the Gateway (e.g. Istio EnvoyFilter), leverage Gateway API v1.5's standardized `spec.tls.frontend.default.validation` configuration:
+**This is a prerequisite, not part of this RFC's deliverables.** Users must configure their gateway proxy to perform TLS client certificate validation and populate the XFCC header. There are three approaches, listed from recommended to exceptional use cases:
+
+### Tier 1: Gateway API `spec.tls.frontend.default.validation` (Recommended)
+
+Use Gateway API v1.5+'s standardized `spec.tls.frontend.default.validation` configuration:
 
 ```yaml
 apiVersion: gateway.networking.k8s.io/v1
@@ -125,18 +139,107 @@ spec:
           mode: AllowValidOnly
 ```
 
-**Key aspects**:
-- `spec.tls.frontend.default.validation.caCertificateRefs` points to ConfigMap(s) containing trusted CA certificates (PEM format under `ca.crt` key)
-- `spec.tls.frontend.default.validation.mode` specifies the validation mode (`AllowValidOnly` or `AllowInsecureFallback`)
-- Supported in Gateway API v1.4 (Experimental) and v1.5+ (Standard)
-- Vendor-agnostic: works with any Gateway API implementation (Istio, Envoy Gateway, etc.)
-- Gateway implementation ensures the XFCC header is populated with the validated client certificate
+**Advantages**:
+- Standardized, vendor-agnostic approach
+- Declarative Gateway API resource (no low-level Envoy configuration)
+- Supported in Gateway API v1.5+ (Standard)
+- Gateway implementation automatically populates the XFCC header with validated client certificates
 
-**User Responsibility**:
-Users must manually configure the Gateway resource with appropriate `spec.tls.frontend.default.validation` settings. This is intentional - gateway TLS configuration is infrastructure-level configuration that should be explicit and visible.
+**Configuration**:
+- `spec.tls.frontend.default.validation.caCertificateRefs`: Points to ConfigMap(s) containing trusted CA certificates (PEM format under `ca.crt` key)
+- `spec.tls.frontend.default.validation.mode`: Validation mode (`AllowValidOnly` requires valid certs; `AllowInsecureFallback` permits connections without certs)
 
-**Future Enhancement** (out of scope for this RFC):
-A future iteration could introduce automatic injection of CA certificate references into Gateway configurations based on label selectors specified in AuthPolicy resources, similar to the approach proposed in the original issue #140.
+**When to use**: This is the **recommended approach** for users with Gateway API v1.5+ support.
+
+### Tier 2: EnvoyFilter or Provider-Specific Resources (Alternative)
+
+For users whose Gateway API implementation does not yet support `spec.tls.frontend.default.validation` (pre-v1.5), use provider-specific resources to configure TLS client certificate validation.
+
+**Example with Istio EnvoyFilter**:
+
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: gateway-client-cert-validation
+  namespace: istio-system
+spec:
+  workloadSelector:
+    labels:
+      istio: ingressgateway
+  configPatches:
+  - applyTo: LISTENER
+    match:
+      context: GATEWAY
+      listener:
+        portNumber: 443
+    patch:
+      operation: MERGE
+      value:
+        filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              '@type': type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              require_client_certificate: true
+              common_tls_context:
+                validation_context:
+                  trusted_ca:
+                    filename: /etc/certs/ca-bundle.pem
+```
+
+**Advantages**:
+- Works with older Gateway API versions
+- Fine-grained control over Envoy configuration
+
+**Disadvantages**:
+- Provider-specific (not portable across different Gateway implementations)
+- Requires understanding of underlying proxy configuration (e.g., Envoy)
+- More brittle (changes to Gateway implementation may break configuration)
+
+**When to use**: Use this approach when Gateway API v1.5+ is not available but you need TLS client certificate validation.
+
+### Tier 3: User-Specified XFCC Forwarding (Exceptional Cases)
+
+In exceptional scenarios where TLS client certificate validation **cannot** be configured at the gateway level (e.g., gateway is managed by another team, or validation must happen exclusively at L7), users can configure the proxy to **forward user-specified XFCC headers without validation**.
+
+**Example with Istio Gateway annotation**:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: my-gateway
+  annotations:
+    proxy.istio.io/config: '{"gatewayTopology": {"forwardClientCertDetails": "ALWAYS_FORWARD_ONLY"}}'
+spec:
+  # ... listeners without frontendValidation
+```
+
+**Behavior**:
+- The proxy **forwards** the XFCC header from the incoming request without validating the certificate
+- Clients must provide their certificate in the XFCC header (typically as a PEM-encoded string)
+- **No TLS-level certificate validation occurs** at the gateway
+
+**Security Implications**:
+- **L4 → L7 validation shift**: TLS authentication moves entirely from Layer 4 (transport) to Layer 7 (application). The proxy no longer validates certificates against trusted CAs during the TLS handshake.
+- **Authorino becomes the sole validator**: Only Authorino validates certificates against trusted CAs. There is no defense-in-depth.
+- **Client key possession not verified**: Since the certificate is passed as a header (not via TLS handshake), there's no cryptographic proof that the client possesses the private key corresponding to the certificate.
+- **Spoofing risk**: If the XFCC header reaches the proxy from an untrusted source (e.g., through another proxy in the chain), it could be spoofed.
+
+**When to use**: Use this approach **only** in exceptional cases where:
+- Gateway-level TLS validation is not possible or not desired
+- You accept the security trade-offs of L7-only certificate validation
+- You trust the source of the XFCC header (e.g., it comes from a trusted upstream proxy)
+- You understand that certificate private key possession is not cryptographically verified
+
+**Not recommended** for production security-critical applications.
+
+## Gateway Configuration Is User Responsibility
+
+Regardless of which tier is used, **configuring the gateway for TLS client certificate validation is the user's responsibility** and is not automated by this RFC. Gateway TLS configuration is infrastructure-level configuration that should be explicit and visible.
+
+**Future Enhancement** (out of scope for this RFC): A future iteration could introduce opt-in automatic injection of CA certificate references into Gateway configurations based on AuthPolicy settings.
 
 # Architecture Changes
 
@@ -153,7 +256,8 @@ A future iteration could introduce automatic injection of CA certificate referen
 │         Gateway (Envoy/Istio)               │
 │  ┌───────────────────────────────────────┐  │
 │  │ TLS Termination                       │  │
-│  │ - Validates client cert against CA    │  │
+│  │ - Validates client cert (Tier 1/2)*   │  │
+│  │   OR forwards XFCC header (Tier 3)    │  │
 │  │ - Populates XFCC header               │  │
 │  └───────────────────────────────────────┘  │
 └──────┬──────────────────────────────────────┘
@@ -179,12 +283,17 @@ A future iteration could introduce automatic injection of CA certificate referen
 └─────────────────────────────────────────────┘
 ```
 
+**Note**: The gateway's role in certificate validation depends on the proxy configuration tier:
+- **Tier 1/2**: Gateway validates client certificates during TLS handshake and populates XFCC header with validated certificate
+- **Tier 3**: Gateway forwards user-provided XFCC header without TLS-level validation; Authorino is the sole validator
+
 ## Key Architectural Principles
 
-1. **Separation of Concerns**: TLS termination and certificate validation at the gateway level; certificate-based authentication at the application level (Authorino)
-2. **Standard Protocols**: Uses industry-standard XFCC header format for certificate propagation
-3. **Vendor Neutrality**: Relies on Gateway API standard features, not vendor-specific extensions
-4. **Explicit Configuration**: Gateway TLS configuration remains explicit and user-managed
+1. **Separation of Concerns**: TLS termination at the gateway level; certificate-based authentication at the application level (Authorino). Note: Tier 3 shifts TLS validation entirely to L7 (Authorino only).
+2. **Standard Protocols**: Uses industry-standard XFCC header format for certificate propagation between proxy and authorization service
+3. **Flexibility**: Supports multiple proxy configuration approaches (Gateway API, EnvoyFilter, XFCC forwarding) based on user environment and requirements
+4. **Explicit Configuration**: Gateway/proxy TLS configuration remains explicit and user-managed, not automated by Kuadrant
+5. **Defense in Depth** (Tier 1/2): Gateway validates certificates at TLS layer; Authorino provides fine-grained application-level validation with multi-CA trust
 
 # API Changes
 
@@ -334,44 +443,117 @@ The wasm-shim already forwards HTTP headers (including XFCC) to Authorino as par
 
 ## Certificate Validation Trust Chain
 
-1. **Gateway-Level Validation**: The gateway validates the client certificate against the CA bundle configured in `spec.tls.frontend.default.validation.caCertificateRefs`
+The security model depends on which proxy configuration tier is used:
+
+### Tier 1 & 2: Gateway-Level TLS Validation (Defense in Depth)
+
+When using Gateway API `spec.tls.frontend.default.validation` or EnvoyFilter-based TLS validation:
+
+1. **Gateway-Level Validation (L4/TLS)**:
+   - The gateway validates the client certificate during the TLS handshake against the CA bundle configured in the proxy
    - Only certificates signed by trusted CAs are accepted
-   - Invalid or expired certificates are rejected at the TLS layer
+   - Invalid, expired, or untrusted certificates are rejected at the TLS layer
+   - The proxy cryptographically verifies that the client possesses the private key corresponding to the certificate
 
-2. **Authorino-Level Validation**: Authorino performs additional application-level validation
-   - Integration with Kubernetes Secret resources for trusted certificates, via label selectors
-   - Certificate parsing and validation
-   - CA trust verification (matches a trusted CA from selectors)
+2. **Authorino-Level Validation (L7/Application)**:
+   - Authorino extracts the certificate from the XFCC header
+   - Performs additional application-level validation:
+     - Trusts certificates that match label selectors (supports multiple intermediate CAs)
+     - Validates certificate chain against trusted CAs from Kubernetes Secrets
+     - Can apply fine-grained rules (subject matching, organization, etc.)
 
-**Defense in Depth**: Both layers must succeed for authentication to pass.
+**Defense in Depth**: Both layers must succeed for authentication to pass. The gateway validates the certificate cryptographically at TLS level; Authorino applies application-specific trust policies.
+
+### Tier 3: L7-Only Validation (Authorino Only)
+
+When using user-specified XFCC (forwarded by the proxy without TLS validation):
+
+1. **No Gateway-Level Validation**: The proxy forwards the XFCC header without validating the certificate or performing a TLS handshake with client cert requirements.
+
+2. **Authorino-Level Validation Only (L7/Application)**:
+   - Authorino is the **sole validator** of the certificate
+   - Validates the certificate against trusted CAs from Kubernetes Secrets
+   - **Cannot verify** that the client possesses the private key (no TLS handshake)
+
+**Security Trade-offs**:
+- ❌ No cryptographic proof of private key possession
+- ❌ No defense in depth (single point of failure)
+- ⚠️ Potential spoofing if XFCC header comes from untrusted source
+- ✅ Still validates certificate chain and trust against CAs
+- ✅ Supports multi-CA trust via Authorino's label selectors
+
+**Use only in exceptional cases** where gateway-level TLS validation is not feasible.
 
 ## XFCC Header Security
 
-**Critical Security Consideration**: The XFCC header must be trusted and cannot be spoofed by clients.
+**Critical Security Consideration**: The XFCC header must originate from a trusted source and cannot be spoofed by clients.
 
-**Mitigation**:
-1. The gateway proxy (Envoy/Istio) **must** be configured to:
-   - Strip any XFCC headers from incoming client requests (prevent spoofing)
-   - Only set XFCC header after successful TLS validation
+### Tier 1 & 2: XFCC Set by Gateway After TLS Validation
 
-2. This is standard behavior in Envoy when `forward_client_cert_details` is configured properly
+When using gateway-level TLS validation, the proxy configuration **must** ensure:
 
-3. Documentation must explicitly warn users:
-   - XFCC header source must be the trusted gateway proxy
-   - Do not use `source.header` if the header could be set by untrusted sources
-   - When in doubt, verify proxy configuration
+1. **Strip incoming XFCC headers**: Any XFCC headers in incoming client requests must be stripped to prevent spoofing
+2. **Set XFCC only after validation**: The proxy sets the XFCC header only after successfully validating the client certificate during the TLS handshake
+
+**Envoy behavior**:
+- When `forward_client_cert_details` is set to `SANITIZE_SET` or `APPEND_FORWARD` (recommended), Envoy:
+  - Strips any incoming XFCC headers from untrusted clients
+  - Sets/appends the XFCC header only after TLS validation succeeds
+- This is the **standard and secure** behavior
+
+**Istio default**: Istio's gateway proxies are typically configured with secure XFCC handling by default.
+
+### Tier 3: XFCC Forwarded from Client
+
+When using `forwardClientCertDetails: ALWAYS_FORWARD_ONLY`:
+
+⚠️ **Security Warning**: The proxy forwards the XFCC header from the incoming request **without validation**. This means:
+- Clients can potentially spoof the XFCC header
+- The header must come from a **trusted source** (e.g., an upstream proxy that performed TLS validation)
+- If clients can directly reach the gateway, **do not use this approach**
+
+**When Tier 3 is acceptable**:
+- XFCC header originates from a trusted upstream proxy
+- Network topology prevents direct client access to the gateway
+- You accept the risk of L7-only validation
+
+### Documentation Warnings
+
+Documentation must explicitly warn users:
+- **Default assumption**: XFCC header is set by the gateway proxy after TLS validation (Tier 1/2)
+- **Verify proxy configuration**: Ensure the proxy strips incoming XFCC headers and sets them only after validation
+- **Do not use `source.header` in Tier 3** unless you trust the source and understand the security implications
+- **When in doubt**: Use Tier 1 (Gateway API) or Tier 2 (EnvoyFilter) with proper TLS validation
 
 ## CA Certificate Management
 
+### Gateway-Level CA Configuration (Tier 1 & 2)
+
 **User Responsibility**:
-- Users must securely manage CA certificate ConfigMaps referenced in Gateway `spec.tls.frontend.default.validation`
-- Rotation of CA certificates requires updating ConfigMaps and potentially restarting gateway pods
+- Users must securely manage CA certificates for gateway-level validation:
+  - **Tier 1**: ConfigMaps referenced in Gateway `spec.tls.frontend.default.validation.caCertificateRefs`
+  - **Tier 2**: CA certificates configured in EnvoyFilter or provider-specific resources
+- Rotation of gateway CA certificates requires updating ConfigMaps/resources and potentially restarting gateway pods
 - Namespace isolation: CA ConfigMaps should be in the same namespace as the Gateway or explicitly allowed via ReferenceGrant
 
-**Best Practices** (to be documented):
-- Use cert-manager for automatic CA certificate management
+### Authorino-Level CA Configuration (All Tiers)
+
+**User Responsibility**:
+- Users must manage CA certificates in Kubernetes Secrets with appropriate labels for Authorino's label selectors
+- Rotation of Authorino-trusted CAs requires updating Secrets
+- **Multi-CA trust**: Authorino can trust multiple intermediate CAs, providing fine-grained revocation control
+
+**Key Difference**:
+- **Gateway CAs** (Tier 1/2): Typically a single root CA, validated at TLS handshake
+- **Authorino CAs**: Can be multiple intermediate CAs selected via label selectors, providing granular trust management and easier revocation
+
+### Best Practices
+
+**To be documented**:
+- Use cert-manager for automatic CA certificate management (both gateway and Authorino)
 - Implement certificate rotation strategies
 - Monitor certificate expiration
+- Consider using different CAs for gateway-level and application-level trust when defense in depth is required
 
 ## Comparison with Direct Certificate Access
 
@@ -409,15 +591,17 @@ The wasm-shim already forwards HTTP headers (including XFCC) to Authorino as par
 **Approach**: Use anonymous authentication + OPA Rego policies to parse XFCC headers (as documented in the workaround).
 
 **Pros**:
-- Works today without code changes
-- Flexible policy language
+- Works today without code changes to Kuadrant components
+- Flexible policy language (can implement custom validation logic)
 
 **Cons**:
-- Requires deep OPA knowledge
-- Does not leverage Authorino's native x509 authentication
-- Poor user experience
+- **Bypasses authentication phase**: Uses `anonymous` authentication, losing Authorino's authentication features
+- **No multi-CA trust via label selectors**: OPA policy must implement certificate validation logic manually, cannot leverage Authorino's integration with Kubernetes Secrets for trusted CAs
+- Requires deep OPA knowledge and custom policy maintenance
+- Complex to implement correctly (certificate parsing, chain validation, CA trust)
+- Poor user experience (expected `authentication.x509` API doesn't work)
 
-**Decision**: This is the current workaround but should be replaced by native support.
+**Decision**: This workaround should be replaced by native support. The main pain point is not the complexity of OPA, but the **loss of Authorino's native x509 authentication features**, particularly multi-CA trust and label-based certificate selection.
 
 ## Alternative 3: Automatic Gateway configuration injection
 
@@ -511,12 +695,17 @@ The wasm-shim already forwards HTTP headers (including XFCC) to Authorino as par
 
 4. **Documentation**:
    - Update AuthPolicy documentation
-   - Create comprehensive example showing:
-     - Gateway configuration with spec.tls.frontend.default.validation
-     - CA certificate ConfigMap
-     - AuthPolicy with x509.source.header
+   - Create comprehensive examples showing all three proxy configuration tiers:
+     - **Tier 1**: Gateway with `spec.tls.frontend.default.validation` (recommended)
+     - **Tier 2**: Gateway with EnvoyFilter for TLS client validation (alternative)
+     - **Tier 3**: Gateway with XFCC forwarding annotation (exceptional cases)
+   - For each tier, show:
+     - Complete Gateway/proxy configuration
+     - CA certificate ConfigMap (for Tier 1/2)
+     - AuthPolicy with `x509.source.header`
      - HTTPRoute binding
-   - Document security considerations
+   - Document security considerations and trade-offs of each tier
+   - Document Authorino's multi-CA trust capabilities via label selectors
 
 **Deliverables**:
 - PR to Kuadrant Operator repository
@@ -542,15 +731,22 @@ The wasm-shim already forwards HTTP headers (including XFCC) to Authorino as par
 
 1. **Release Notes**:
    - Document new feature in release notes
-   - Highlight Gateway API v1.5 requirement
+   - Highlight that `authentication.x509` in AuthPolicy now works via XFCC header extraction
+   - Note that gateway proxy configuration is user responsibility (not automated)
 
 2. **User Guides**:
-   - Create step-by-step guide for enabling X.509 authentication
-   - Include cert-manager integration example
-   - Troubleshooting guide
+   - Create step-by-step guide for enabling X.509 authentication with all three tiers
+   - **Tier 1 guide** (recommended): Gateway API v1.5+ with `spec.tls.frontend.default.validation`
+   - **Tier 2 guide** (alternative): EnvoyFilter for users with older Gateway API versions
+   - **Tier 3 guide** (exceptional): XFCC forwarding with security warnings
+   - Include cert-manager integration examples for both gateway and Authorino CA management
+   - Document Authorino's multi-CA trust via label selectors
+   - Troubleshooting guide (common issues: XFCC header not populated, certificate not trusted, etc.)
 
 3. **Migration Guide**:
-   - Document migration from OPA workaround to native support
+   - Document migration from OPA workaround to native `authentication.x509`
+   - Show how to replace OPA Rego policies with Authorino's native certificate validation
+   - Explain how to configure multi-CA trust using label selectors
 
 **Deliverables**:
 - Updated documentation site
@@ -601,39 +797,72 @@ The wasm-shim already forwards HTTP headers (including XFCC) to Authorino as par
 
 ### Testsuite Repository
 
-**Test Scenario 1: Happy Path**
+**Test Scenario 1: Happy Path (Tier 1 - Gateway API)**
 - Setup:
   - Gateway with `spec.tls.frontend.default.validation` configured
-  - CA certificate ConfigMap
+  - CA certificate ConfigMap for gateway validation
+  - CA certificate Secret(s) with labels for Authorino validation
   - AuthPolicy with `x509.source.header: "X-Forwarded-Client-Cert"`
   - HTTPRoute bound to AuthPolicy
 - Test:
   - Client with valid certificate → 200 OK
-  - Client without certificate → 401 Unauthorized
-  - Client with certificate signed by wrong CA → 401 Unauthorized
+  - Client without certificate → 401 Unauthorized (rejected at TLS layer)
+  - Client with certificate signed by wrong CA → 401 Unauthorized (rejected at gateway or Authorino)
 
-**Test Scenario 2: Certificate Subject Validation**
-- Setup: AuthPolicy with additionl authorization rule matching specific certificate subjects (using OPA or CEL)
+**Test Scenario 1b: Happy Path (Tier 2 - EnvoyFilter)**
+- Setup:
+  - Gateway with EnvoyFilter configuring TLS client validation
+  - CA certificate file mounted in gateway pod
+  - CA certificate Secret(s) with labels for Authorino validation
+  - AuthPolicy with `x509.source.header: "X-Forwarded-Client-Cert"`
+  - HTTPRoute bound to AuthPolicy
+- Test:
+  - Same as Scenario 1
+
+**Test Scenario 1c: L7-Only Validation (Tier 3 - XFCC Forwarding)**
+- Setup:
+  - Gateway with `forwardClientCertDetails: ALWAYS_FORWARD_ONLY` annotation
+  - No gateway-level TLS client validation configured
+  - CA certificate Secret(s) with labels for Authorino validation
+  - AuthPolicy with `x509.source.header: "X-Forwarded-Client-Cert"`
+  - HTTPRoute bound to AuthPolicy
+- Test:
+  - Client with valid certificate in XFCC header → 200 OK (validated by Authorino only)
+  - Client without XFCC header → 401 Unauthorized
+  - Client with certificate signed by wrong CA in XFCC header → 403 Forbidden (Authorino rejects)
+  - Verify that gateway does NOT reject invalid certificates (they pass through to Authorino)
+
+**Test Scenario 2: Multi-CA Trust via Label Selectors**
+- Setup:
+  - AuthPolicy trusting multiple intermediate CAs via label selectors
+  - Multiple CA Secrets with different labels (e.g., `ca-team-a`, `ca-team-b`)
+- Test:
+  - Client cert signed by CA with matching label → 200 OK
+  - Client cert signed by CA without matching label → 403 Forbidden
+  - Demonstrates Authorino's fine-grained CA trust (vs. single root CA in gateway)
+
+**Test Scenario 3: Certificate Subject Validation**
+- Setup: AuthPolicy with additional authorization rule matching specific certificate subjects (using OPA or CEL)
 - Test:
   - Client with matching subject → 200 OK
   - Client with valid cert but non-matching subject → 403 Forbidden
 
-**Test Scenario 3: Certificate Chain Validation**
-- Setup: Intermediate CA certificates
+**Test Scenario 4: Certificate Chain Validation**
+- Setup: Intermediate CA certificates in XFCC
 - Test: Client certificate signed by intermediate CA (full chain in XFCC)
 
-**Test Scenario 4: Custom Header Name**
+**Test Scenario 5: Custom Header Name**
 - Setup: AuthPolicy with `x509.source.header: "X-Custom-Client-Cert"`
-- Modify gateway to use custom header
+- Modify gateway to use custom header (implementation-specific)
 - Test: Verification with custom header
 
-**Test Scenario 5: Backward Compatibility**
-- Setup: AuthPolicy without `source` field
-- Test: Verify existing behavior is not broken
+**Test Scenario 6: Backward Compatibility**
+- Setup: AuthPolicy without `source` field (legacy behavior)
+- Test: Verify existing behavior is not broken (expects cert in `attributes.source.certificate`)
 
-**Test Scenario 6: Multi-Gateway**
-- Setup: Multiple gateways with different CA configurations
-- Test: Different AuthPolicies for different gateways
+**Test Scenario 7: Multi-Gateway**
+- Setup: Multiple gateways with different CA configurations and validation tiers
+- Test: Different AuthPolicies for different gateways (Tier 1 on one gateway, Tier 2 on another)
 
 ### Gateway Implementation Matrix
 
@@ -666,13 +895,15 @@ Verify XFCC header format consistency across implementations.
 
 ## Test Fixtures
 
-### Gateway Configuration Fixture
+### Gateway Configuration Fixtures
+
+#### Tier 1: Gateway API Frontend Validation
 ```python
 @pytest.fixture
-def gateway_with_client_cert_validation(cluster, module_label):
-    """Gateway configured with spec.tls.frontend.default.validation for client certificates"""
+def gateway_tier1_gatewayapi_validation(cluster, module_label):
+    """Gateway configured with spec.tls.frontend.default.validation (Tier 1 - recommended)"""
     gateway = Gateway.from_dict({
-        "metadata": {"name": "x509-gateway", "namespace": "kuadrant-system"},
+        "metadata": {"name": "x509-gateway-tier1", "namespace": "kuadrant-system"},
         "spec": {
             "gatewayClassName": "istio",
             "listeners": [{
@@ -694,6 +925,87 @@ def gateway_with_client_cert_validation(cluster, module_label):
                     }
                 }
             }
+        }
+    })
+    cluster.create(gateway)
+    yield gateway
+    cluster.delete(gateway)
+```
+
+#### Tier 2: EnvoyFilter Configuration
+```python
+@pytest.fixture
+def gateway_tier2_envoyfilter(cluster, module_label):
+    """Gateway with EnvoyFilter for TLS client validation (Tier 2 - alternative)"""
+    # Create basic gateway without frontendValidation
+    gateway = Gateway.from_dict({
+        "metadata": {"name": "x509-gateway-tier2", "namespace": "kuadrant-system"},
+        "spec": {
+            "gatewayClassName": "istio",
+            "listeners": [{
+                "name": "https",
+                "protocol": "HTTPS",
+                "port": 443,
+                "tls": {
+                    "mode": "Terminate",
+                    "certificateRefs": [{"name": "gateway-cert"}]
+                }
+            }]
+        }
+    })
+
+    # Create EnvoyFilter for client cert validation
+    envoy_filter = cluster.apply_from_dict({
+        "apiVersion": "networking.istio.io/v1alpha3",
+        "kind": "EnvoyFilter",
+        "metadata": {"name": "gateway-client-cert", "namespace": "istio-system"},
+        "spec": {
+            "workloadSelector": {"labels": {"istio": "ingressgateway"}},
+            "configPatches": [{
+                "applyTo": "LISTENER",
+                "match": {"context": "GATEWAY", "listener": {"portNumber": 443}},
+                "patch": {
+                    "operation": "MERGE",
+                    "value": {
+                        # EnvoyFilter configuration for client cert validation
+                        # (implementation details omitted for brevity)
+                    }
+                }
+            }]
+        }
+    })
+
+    cluster.create(gateway)
+    yield gateway
+    cluster.delete(gateway)
+    cluster.delete(envoy_filter)
+```
+
+#### Tier 3: XFCC Forwarding
+```python
+@pytest.fixture
+def gateway_tier3_xfcc_forwarding(cluster, module_label):
+    """Gateway with XFCC forwarding, no TLS validation (Tier 3 - exceptional)"""
+    gateway = Gateway.from_dict({
+        "metadata": {
+            "name": "x509-gateway-tier3",
+            "namespace": "kuadrant-system",
+            "annotations": {
+                "proxy.istio.io/config": '{"gatewayTopology": {"forwardClientCertDetails": "ALWAYS_FORWARD_ONLY"}}'
+            }
+        },
+        "spec": {
+            "gatewayClassName": "istio",
+            "listeners": [{
+                "name": "https",
+                "protocol": "HTTPS",
+                "port": 443,
+                "tls": {
+                    "mode": "Terminate",
+                    "certificateRefs": [{"name": "gateway-cert"}]
+                }
+            }]
+            # Note: No frontendValidation - XFCC is forwarded without gateway validation
         }
     })
     cluster.create(gateway)
@@ -846,10 +1158,16 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
    - [ ] How does XFCC represent this (comma-separated, multiple headers)?
    - [ ] Should Authorino support selecting specific certificates from a set?
 
-6. **Automatic Gateway Configuration** (Future):
-   - [ ] Should Kuadrant offer automatic injection of `spec.tls.frontend.default.validation` in a future version?
-   - [ ] If so, what should the API look like?
+6. **Proxy Configuration Guidance**:
+   - [ ] Should documentation include decision tree for choosing between Tier 1/2/3?
+   - [ ] Should there be a warning/validation in AuthPolicy when using `x509.source.header` without proper gateway configuration?
+   - [ ] How can users verify their gateway is properly configured for XFCC?
+
+7. **Automatic Gateway Configuration** (Future):
+   - [ ] Should Kuadrant offer opt-in automatic injection of `spec.tls.frontend.default.validation` in a future version?
+   - [ ] If so, what should the API look like (annotation, dedicated field)?
    - [ ] How to avoid conflicts with user-managed Gateway configurations?
+   - [ ] Should it support both Tier 1 (Gateway API) and Tier 2 (EnvoyFilter) injection?
 
 ## Implementation TODOs
 
@@ -903,13 +1221,22 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
 - [ ] Submit PR to testsuite repository
 
 ### Documentation
-- [ ] Write user guide for X.509 authentication
-- [ ] Create step-by-step tutorial with cert-manager
-- [ ] Document troubleshooting steps
-- [ ] Write migration guide from OPA workaround
+- [ ] Write user guide for X.509 authentication with all three tiers
+- [ ] Create step-by-step tutorials:
+  - [ ] Tier 1: Gateway API v1.5+ with `spec.tls.frontend.default.validation` (recommended)
+  - [ ] Tier 2: EnvoyFilter for older Gateway API versions (alternative)
+  - [ ] Tier 3: XFCC forwarding for exceptional cases (with security warnings)
+- [ ] Document multi-CA trust configuration using label selectors
+- [ ] Create decision tree for choosing proxy configuration tier
+- [ ] Document cert-manager integration examples (gateway CAs + Authorino CAs)
+- [ ] Document troubleshooting steps:
+  - [ ] XFCC header not populated
+  - [ ] Certificate not trusted by Authorino
+  - [ ] Gateway vs. Authorino validation failures
+- [ ] Write migration guide from OPA workaround to native `authentication.x509`
 - [ ] Update release notes
-- [ ] Create architecture diagrams
-- [ ] Document XFCC header format and security considerations
+- [ ] Create architecture diagrams (defense in depth vs. L7-only validation)
+- [ ] Document XFCC header format and security considerations for each tier
 
 ### Release
 - [ ] Coordinate release versions across repos (Authorino, operators)
@@ -920,21 +1247,27 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
 
 ## Future Enhancements
 
-- [ ] **Automatic CA Injection**: Investigate automatic injection of CA certificates into Gateway `spec.tls.frontend.default.validation` based on AuthPolicy configuration
-- [ ] **Certificate Revocation**: Add support for CRL or OCSP-based certificate revocation checking
+- [ ] **Automatic Gateway Configuration** (opt-in): Investigate automatic injection of CA certificates and TLS validation configuration into Gateway resources based on AuthPolicy settings
+  - Support both Tier 1 (Gateway API `spec.tls.frontend.default.validation`) and Tier 2 (EnvoyFilter) injection
+  - Require explicit user opt-in to avoid unexpected mutations
+  - Address ownership and conflict resolution with user-managed configurations
+- [ ] **Configuration Validation**: Add validation/warnings to AuthPolicy when `x509.source.header` is configured but gateway appears to lack proper TLS validation
+- [ ] **Certificate Revocation**: Add support for CRL or OCSP-based certificate revocation checking in Authorino
 - [ ] **Dynamic CA Updates**: Hot-reload CA certificates without gateway restarts
-- [ ] **Certificate Metrics**: Expose Prometheus metrics for certificate validation (success/failure rates, expiration warnings)
-- [ ] **Certificate Caching**: Cache parsed certificates to reduce CPU overhead
+- [ ] **Certificate Metrics**: Expose Prometheus metrics for certificate validation (success/failure rates, expiration warnings, which tier was used)
+- [ ] **Certificate Caching**: Cache parsed certificates in Authorino to reduce CPU overhead
 - [ ] **Multi-Header Support**: Support extracting certificates from multiple headers (e.g., for proxy chains)
-- [ ] **Direct TLS Attribute Access**: Long-term goal to access certificates directly from TLS connection in wasm-shim
-- [ ] **Gateway API Integration**: Contribute to Gateway API to standardize certificate forwarding behavior
+- [ ] **Direct TLS Attribute Access**: Long-term goal to access certificates directly from TLS connection in wasm-shim (would eliminate need for XFCC entirely)
+- [ ] **Gateway API Integration**: Contribute to Gateway API to standardize certificate forwarding behavior and XFCC header format
 
 ---
 
 ## References
 
-- [GitHub Issue #140](https://github.com/Kuadrant/architecture/issues/140)
-- [Gateway API v1.5 Specification](https://gateway-api.sigs.k8s.io/reference/1.5/spec/)
-- [Envoy XFCC Header Documentation](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-client-cert)
-- [Authorino X.509 Authentication](https://github.com/Kuadrant/authorino/blob/main/docs/features.md#x509-client-certificate-authentication-identityx509)
-- [Gateway API Frontend TLS Validation](https://gateway-api.sigs.k8s.io/geps/gep-91/)
+- [GitHub Issue #140](https://github.com/Kuadrant/architecture/issues/140) - Original feature request and workaround documentation
+- [PR #141 Comment on Tier 3 Approach](https://github.com/Kuadrant/architecture/pull/141#discussion_r2906277267) - Discussion of XFCC forwarding without TLS validation
+- [Gateway API v1.5 Specification](https://gateway-api.sigs.k8s.io/reference/1.5/spec/) - Frontend TLS validation (Tier 1)
+- [Gateway API Frontend TLS Validation GEP](https://gateway-api.sigs.k8s.io/geps/gep-91/) - Background on the standardization of client cert validation
+- [Envoy XFCC Header Documentation](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers#x-forwarded-client-cert) - XFCC header format specification
+- [Envoy forward_client_cert_details](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/transport_sockets/tls/v3/tls.proto#extensions-transport-sockets-tls-v3-tlscontext) - Configuration for XFCC header behavior
+- [Authorino X.509 Authentication](https://github.com/Kuadrant/authorino/blob/main/docs/features.md#x509-client-certificate-authentication-identityx509) - Current x509 authentication documentation
