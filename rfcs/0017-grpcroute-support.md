@@ -10,16 +10,18 @@
 This design document outlines the implementation of GRPCRoute support in the Kuadrant ecosystem. GRPCRoute is a Gateway API resource (GA since v1.1.0) that provides gRPC-native routing semantics. This work enables all Kuadrant policies except TokenRateLimitPolicy to work with GRPCRoute resources:
 
 - **Data plane policies** (AuthPolicy, RateLimitPolicy) can target GRPCRoute resources via the standard `targetRef` field
-- **Extension policies** (OIDCPolicy, PlanPolicy, TelemetryPolicy) can target GRPCRoute resources via the standard `targetRef` field
-- **Infrastructure policies** (DNSPolicy, TLSPolicy) continue to work when applied to Gateways with attached GRPCRoutes
+- **Extension policies** (OIDCPolicy, PlanPolicy) can target GRPCRoute resources via the standard `targetRef` field
+- **Infrastructure policies** (DNSPolicy, TLSPolicy, TelemetryPolicy) continue to work when applied to Gateways with attached GRPCRoutes
 
 TokenRateLimitPolicy is explicitly excluded as it requires protobuf response body parsing for token counting, which is beyond the scope of this proposal.
+
+**Note on TelemetryPolicy:** TelemetryPolicy is categorized as an infrastructure policy because it currently only supports Gateway-level targeting (XValidation: `self.kind == 'Gateway'`), not route-level targeting. It works identically for Gateways with HTTPRoute or GRPCRoute attachments, requiring no GRPCRoute-specific changes.
 
 ## Goals
 
 1. Enable **data plane policies** (AuthPolicy, RateLimitPolicy) to target GRPCRoute resources via the standard `targetRef` field
-2. Enable **extension policies** (OIDCPolicy, PlanPolicy, TelemetryPolicy) to target GRPCRoute resources via the standard `targetRef` field
-3. Verify **infrastructure policies** (DNSPolicy, TLSPolicy) continue to work correctly when applied to Gateways with attached GRPCRoutes
+2. Enable **extension policies** (OIDCPolicy, PlanPolicy) to target GRPCRoute resources via the standard `targetRef` field
+3. Verify **infrastructure policies** (DNSPolicy, TLSPolicy, TelemetryPolicy) continue to work correctly when applied to Gateways with attached GRPCRoutes
 4. Generate correct CEL predicates from GRPCRouteMatch (service/method matching)
 5. Integrate GRPCRoutes into the existing topology graph
 6. Provide example applications and documentation for gRPC use cases
@@ -62,7 +64,7 @@ gRPC runs over HTTP/2, not alongside it. From Envoy's perspective, a gRPC reques
 | `request.method` | `GET`, `POST`, etc. | Always `POST` |
 | `request.url_path` | `/api/users/123` | `/package.Service/Method` |
 | `request.headers` | Standard headers | HTTP/2 headers + gRPC metadata |
-| Protocol | HTTP/1.1 or HTTP/2 | HTTP/2 |
+| `request.protocol` | `HTTP/1.1` or `HTTP/2` | `HTTP/2` |
 
 This means:
 - **No changes needed to WASM shim** - CEL predicates against HTTP attributes work for gRPC
@@ -109,15 +111,17 @@ GRPCRouteMatch translates to CEL predicates using standard HTTP attributes:
 
 #### Policy TargetRef Validation
 
-All Kuadrant policies except TokenRateLimitPolicy will accept `GRPCRoute` as a valid `targetRef` kind. The policy structure is identical to HTTPRoute — only the `targetRef` changes.
+Route-targeting policies (AuthPolicy, RateLimitPolicy, OIDCPolicy, PlanPolicy) will accept `GRPCRoute` as a valid `targetRef` kind. The policy structure is identical to HTTPRoute — only the `targetRef` changes.
 
 **Policies supporting GRPCRoute:**
 - **Data plane policies**: AuthPolicy, RateLimitPolicy
-- **Extension policies**: OIDCPolicy, PlanPolicy, TelemetryPolicy
-- **Infrastructure policies**: DNSPolicy, TLSPolicy (target Gateways, not routes directly)
+- **Extension policies**: OIDCPolicy, PlanPolicy
+- **Infrastructure policies**: DNSPolicy, TLSPolicy, TelemetryPolicy (target Gateways, not routes directly)
 
 **Policies excluded:**
 - **TokenRateLimitPolicy**: Requires protobuf response body parsing (see Non-Goals)
+
+**Note:** TelemetryPolicy is Gateway-only (XValidation: `self.kind == 'Gateway'`) and does not support route-level targeting for either HTTPRoute or GRPCRoute. It works identically for Gateways regardless of attached route types.
 
 **Example - RateLimitPolicy targeting HTTPRoute (existing):**
 ```yaml
@@ -148,6 +152,27 @@ spec:
 
 The rest of the policy spec (rules, limits, authentication config, etc.) is identical. This pattern applies to all Kuadrant policies. Policies operate on the generated CEL predicates, not the route type directly.
 
+#### CRD Validation Updates
+
+Each policy's CRD requires an XValidation marker update to accept GRPCRoute as a valid targetRef kind. These updates are implemented as part of each policy's GRPCRoute support task:
+
+**AuthPolicy, RateLimitPolicy, OIDCPolicy, PlanPolicy** (Tasks 4, 5, 6):
+```go
+// Update from:
+// +kubebuilder:validation:XValidation:rule="self.kind == 'HTTPRoute' || self.kind == 'Gateway'"
+
+// To:
+// +kubebuilder:validation:XValidation:rule="self.kind == 'HTTPRoute' || self.kind == 'GRPCRoute' || self.kind == 'Gateway'"
+```
+
+**TokenRateLimitPolicy** (Task 3):
+```go
+// Explicitly reject GRPCRoute with clear error message:
+// +kubebuilder:validation:XValidation:rule="self.kind != 'GRPCRoute'",message="TokenRateLimitPolicy does not support GRPCRoute (requires protobuf response parsing)"
+```
+
+After updating markers, run `make generate manifests` to regenerate CRDs.
+
 #### Example GRPCRoute Configuration
 
 ```yaml
@@ -177,21 +202,47 @@ spec:
 | Component | Repository | Change Type |
 |-----------|------------|-------------|
 | policy-machinery | `kuadrant/policy-machinery` | Controller-layer wiring (machinery types/topology already exist) |
-| kuadrant-operator | `kuadrant/kuadrant-operator` | Watchers, topology, predicates, reconcilers |
+| kuadrant-operator | `kuadrant/kuadrant-operator` | CRD validation, RBAC, watchers, topology, predicates, reconcilers |
 | testsuite | `kuadrant/testsuite` | GRPCRoute class, gRPC backend, E2E tests |
 
 #### Affected Policies (kuadrant-operator)
 
-All policies except TokenRateLimitPolicy will support GRPCRoute targets. Implementation requirements differ based on policy architecture:
+Route-targeting policies (AuthPolicy, RateLimitPolicy, OIDCPolicy, PlanPolicy) require implementation changes to support GRPCRoute. Infrastructure policies work without changes. Implementation requirements differ based on policy architecture:
 
 | Policy Type | Policies | Implementation Changes |
 |-------------|----------|----------------------|
 | **Data Plane Policies** | AuthPolicy, RateLimitPolicy | targetRef validation + reconciler updates for GRPCRouteRule iteration + AuthConfig/Limitador generation |
-| **Extension Policies** | OIDCPolicy, PlanPolicy, TelemetryPolicy | targetRef validation + event subscriptions (no reconciler logic changes needed) |
-| **Infrastructure Policies** | DNSPolicy, TLSPolicy | No changes: target Gateways not routes, verification only |
+| **Extension Policies** | OIDCPolicy, PlanPolicy | targetRef validation + event subscriptions (no reconciler logic changes needed) |
+| **Infrastructure Policies** | DNSPolicy, TLSPolicy, TelemetryPolicy | No changes: target Gateways not routes, verification only |
 | **Excluded Policies** | TokenRateLimitPolicy | Not supported: requires protobuf response body parsing (see Non-Goal #1) |
 
 **Extension policies** use the same WASM shim and event-driven reconciliation as data plane policies, so GRPCRoute support works automatically once the operator infrastructure is in place. These policies only need targetRef validation and event subscription updates — no custom reconciliation logic changes are required.
+
+**Infrastructure policies** are Gateway-only and work identically regardless of attached route types (HTTPRoute or GRPCRoute). TelemetryPolicy is categorized here because its XValidation restricts targeting to Gateway-only (`self.kind == 'Gateway'`).
+
+#### RBAC Updates Required
+
+**Main Operator ClusterRole** (`config/rbac/role.yaml`):
+
+The operator requires permissions to watch and access GRPCRoute resources:
+
+```yaml
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: ["grpcroutes", "grpcroutes/status"]
+  verbs: ["get", "list", "watch"]
+```
+
+**Extension Policy ClusterRoles** (`cmd/extensions/*/config/rbac/role.yaml`):
+
+Extension policies (OIDCPolicy, PlanPolicy) require GRPCRoute permissions for their reconcilers to watch and react to GRPCRoute changes:
+
+```yaml
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: ["grpcroutes"]
+  verbs: ["get", "list", "watch"]
+```
+
+Without these RBAC permissions, watchers and reconcilers will fail with permission denied errors at runtime, making the feature non-functional.
 
 #### Repositories NOT Affected
 
@@ -217,12 +268,14 @@ All policies except TokenRateLimitPolicy will support GRPCRoute targets. Impleme
 
 #### Path Extraction Approach
 
-The current `ObjectsInRequestPath()` returns hard-coded HTTPRoute types. Two approaches for supporting GRPCRoute:
+The current `ObjectsInRequestPath()` returns hard-coded HTTPRoute types. GRPCRoute support uses **separate functions** returning concrete types:
 
-1. **Unified struct** with `machinery.Targetable` interface fields and type-assertion helpers (`IsHTTPRoute()`, `AsGRPCRoute()`, etc.)
-2. **Separate functions** (`ObjectsInHTTPRequestPath()`, `ObjectsInGRPCRequestPath()`) returning concrete types
+- `ObjectsInHTTPRequestPath()` — returns `[]machinery.HTTPRoute`, `[]machinery.HTTPRouteRule`, etc.
+- `ObjectsInGRPCRequestPath()` — returns `[]machinery.GRPCRoute`, `[]machinery.GRPCRouteRule`, etc.
 
-Since policy reconcilers use separate iteration loops for HTTPRouteRules and GRPCRouteRules (see below), callers will already know the route type — making separate functions potentially cleaner. The final approach should be decided during implementation based on how many callers genuinely need route-type-agnostic access.
+This approach is chosen because policy reconcilers use separate iteration loops for HTTPRouteRules and GRPCRouteRules (see below), so callers already know the route type at call time. Separate functions are simpler to implement and debug than a unified struct with type assertion helpers.
+
+**Alternative considered:** Unified struct with `machinery.Targetable` interface fields and type-assertion helpers (`IsHTTPRoute()`, `AsGRPCRoute()`). Rejected as over-engineering for current needs — no callers require route-type-agnostic access.
 
 #### Reconciler Iteration Strategy
 
@@ -233,6 +286,21 @@ Effective policy reconcilers should use **separate iteration loops** for HTTPRou
 Only `GRPCRouteGroupKind` should be added to event matchers — not `GRPCRouteRuleGroupKind`. This follows the existing HTTPRoute pattern where only route-level kinds are used in event subscriptions; rule-level kinds are only used in link functions and topology filtering.
 
 Adding `GRPCRouteGroupKind` to the shared `dataPlaneEffectivePoliciesEventMatchers` list will also cause TokenRateLimitPolicy reconcilers to receive GRPCRoute events. These will be no-ops since TokenRateLimitPolicy does not support GRPCRoute targets (see Non-Goal #1).
+
+#### Well-Known Attributes Behavior with gRPC
+
+**Decision:** Well-Known Attributes remain protocol-agnostic and reflect HTTP/2 reality regardless of route type.
+
+For gRPC requests, `request.method` will always be `POST` because that is the underlying HTTP/2 method that gRPC uses. To match on the gRPC method itself (e.g., "Echo", "GetUser"), users must use `request.url_path` predicates that match the `/Service/Method` pattern.
+
+**Rationale:** Well-Known Attributes are provided by Envoy via the Proxy-Wasm API and represent what Envoy sees on the wire (HTTP/2). The route type (HTTPRoute vs GRPCRoute) is a Gateway API concept for routing configuration, not a data plane protocol distinction. Mixing these concerns would create inconsistent semantics where the same attribute has different meanings based on the Kubernetes resource type rather than the actual protocol.
+
+**Alternative considered:** Making `request.method` context-aware, returning the gRPC method name (parsed from the path) when used with GRPCRoute. This was rejected because:
+1. It would require WASM shim changes to detect gRPC requests (via `content-type: application/grpc`) and parse paths (out of scope for this proposal)
+2. It creates inconsistent attribute semantics where `request.method` means "HTTP method" for HTTPRoute but "gRPC method name" for GRPCRoute
+3. It violates the principle that Well-Known Attributes reflect the wire protocol, not the Kubernetes resource configuration
+
+**Future enhancement:** New gRPC-specific attributes (`grpc.service`, `grpc.method`) could be added later as separate attributes without breaking existing behavior or requiring changes to `request.method` semantics. This approach preserves protocol-accurate WKAs while providing gRPC-specific convenience attributes for policy authors.
 
 #### GRPCRouteMatch Predicate Patterns
 
@@ -275,7 +343,18 @@ This would require WASM shim changes to detect gRPC requests (via `content-type:
 
 ### Security Considerations
 
-No additional security considerations. GRPCRoute support uses the same policy enforcement mechanisms as HTTPRoute. All authentication, authorization, and rate limiting policies apply identically — only the predicate generation differs.
+**Policy Enforcement:**
+
+GRPCRoute support uses the same policy enforcement mechanisms as HTTPRoute. No new attack surface is introduced:
+- AuthConfig CRDs for authentication/authorization (Authorino)
+- Limitador limit definitions for rate limiting
+- WASM filter CEL evaluation for predicate matching
+
+gRPC requests are processed as HTTP/2 requests using existing well-known attributes (`request.url_path`, `request.method`, `request.headers`). All policies enforce identically regardless of route type.
+
+**Implementation Correctness:**
+
+Incomplete implementation could cause silent policy bypass. All components documented in the "Component Changes" section (CRD validation, RBAC permissions, link functions, reconcilers) must be implemented together. Missing any component could result in policies appearing to be applied but not enforcing correctly.
 
 ## Implementation Plan
 
@@ -304,13 +383,13 @@ Tasks are structured so that each policy-specific task includes full end-to-end 
 **Extension policies:**
 - OIDCPolicy targeting GRPCRoute
 - PlanPolicy targeting GRPCRoute
-- TelemetryPolicy targeting GRPCRoute
 
 **Cross-policy scenarios:**
 - Mixed HTTPRoute and GRPCRoute on same Gateway
 - Policy inheritance (Gateway → GRPCRoute)
 - DNSPolicy on Gateway with attached GRPCRoutes resolves hostnames correctly
 - TLSPolicy on Gateway with attached GRPCRoutes provisions certificates correctly
+- TelemetryPolicy on Gateway with attached GRPCRoutes works correctly
 
 **Providers:**
 - Both Istio and Envoy Gateway providers
@@ -330,16 +409,16 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
   Select and validate a publicly available gRPC-capable image for use in integration tests, E2E tests, and examples.
 
 - [ ] **Task 3: kuadrant-operator - Core GRPCRoute Infrastructure** (depends on Task 1)
-  Register GRPCRoute watcher, update topology building, and abstract path extraction to support both HTTPRoute and GRPCRoute.
+  Register GRPCRoute watcher, update topology building, and abstract path extraction to support both HTTPRoute and GRPCRoute. Add ClusterRole permissions for grpcroutes and grpcroutes/status. Update TokenRateLimitPolicy XValidation to explicitly reject GRPCRoute with clear error message.
 
 - [ ] **Task 4: kuadrant-operator - AuthPolicy Support + Data Plane Wiring** (depends on Tasks 2, 3)
-  Enable AuthPolicy to target GRPCRoute with full end-to-end functionality including predicate generation, gateway provider reconcilers (WasmPlugin, auth cluster configs), and integration tests with real gRPC traffic.
+  Enable AuthPolicy to target GRPCRoute with full end-to-end functionality including predicate generation, gateway provider reconcilers (WasmPlugin, auth cluster configs), and integration tests with real gRPC traffic. Update AuthPolicy CRD XValidation to accept GRPCRoute targetRef.
 
 - [ ] **Task 5: kuadrant-operator - RateLimitPolicy Support** (depends on Task 4)
-  Enable RateLimitPolicy to target GRPCRoute including ratelimit cluster reconcilers and integration tests with real gRPC traffic.
+  Enable RateLimitPolicy to target GRPCRoute including ratelimit cluster reconcilers and integration tests with real gRPC traffic. Update RateLimitPolicy CRD XValidation to accept GRPCRoute targetRef.
 
 - [ ] **Task 6: kuadrant-operator - Extension Policies Support** (depends on Task 4)
-  Enable extension policies (OIDCPolicy, PlanPolicy, TelemetryPolicy) to target GRPCRoute with integration tests.
+  Enable extension policies (OIDCPolicy, PlanPolicy) to target GRPCRoute with integration tests. Update OIDCPolicy and PlanPolicy CRD XValidation to accept GRPCRoute targetRef. Add ClusterRole permissions for grpcroutes in each extension policy's RBAC.
 
 - [ ] **Task 7: kuadrant-operator - GRPCRoute Policy Discoverability Reconciler** (depends on Tasks 5, 6)
   Create GRPCRoutePolicyDiscoverabilityReconciler to add status conditions to GRPCRoutes showing which policies affect them.
@@ -403,28 +482,32 @@ type RouteWrapper interface {
 
 ---
 
-## Appendix: Common Misconceptions
+## Appendix: Frequently Asked Questions
 
-### "gRPC needs separate protocol handling"
+### "Does gRPC need separate protocol handling?"
 
-**Incorrect.** gRPC is built on HTTP/2. Envoy sees gRPC requests as HTTP/2 requests with:
-- `:method: POST`
-- `:path: /package.Service/Method`
-- `content-type: application/grpc`
+**No, gRPC uses HTTP/2.** From Envoy's perspective, gRPC requests are HTTP/2 requests with specific characteristics:
+- `:method: POST` (gRPC always uses POST)
+- `:path: /package.Service/Method` (contains service and method)
+- `content-type: application/grpc` (identifies the request as gRPC)
 
-All existing `request.*` Well-Known Attributes apply directly.
+All existing `request.*` Well-Known Attributes apply directly to gRPC traffic. This is why the WASM shim, Authorino, and Limitador require no changes — they already process HTTP/2 attributes correctly.
 
-### "We need gRPC-specific Well-Known Attributes"
+### "Do we need gRPC-specific Well-Known Attributes?"
 
-**Incorrect.** RFC 0002 explicitly supports HTTP/2. The same `request.url_path` attribute works for both:
+**Not required for GRPCRoute support.** RFC 0002 explicitly supports HTTP/2, and the same `request.*` attributes work for both HTTP and gRPC:
 - HTTP: `request.url_path == '/api/users'`
 - gRPC: `request.url_path == '/UserService/GetUser'`
 
-Optional future enhancement: `grpc.service` and `grpc.method` convenience attributes could parse the path for better UX, but are not required for GRPCRoute support.
+Note that `request.method` will always be `POST` for gRPC requests, as gRPC uses HTTP/2 POST for all calls. To match on the gRPC method itself, use `request.url_path` which contains the full `/Service/Method` path.
 
-### "Authorino/Limitador need changes for gRPC"
+**Future enhancement:** Convenience attributes like `grpc.service` and `grpc.method` could parse the path for better UX when writing policy conditions, but are not required for this proposal.
 
-**Incorrect.** These components receive generated artifacts (AuthConfig CRDs, limit definitions) that are protocol-agnostic. The WASM filter evaluates CEL predicates against HTTP/2 attributes - this works identically for gRPC because gRPC IS HTTP/2.
+### "Do Authorino and Limitador need changes for gRPC?"
+
+**No changes required.** These components receive generated artifacts (AuthConfig CRDs, limit definitions) that are protocol-agnostic. The WASM filter evaluates CEL predicates against HTTP/2 attributes, which works identically for gRPC because gRPC runs over HTTP/2.
+
+From Authorino's perspective, a gRPC request looks like an HTTP/2 POST with specific path and header patterns. From Limitador's perspective, rate limit descriptors are built from CEL expressions regardless of the underlying protocol. Both components process gRPC traffic correctly without any code changes.
 
 ---
 
