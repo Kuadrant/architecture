@@ -13,6 +13,8 @@ This design document outlines the implementation of GRPCRoute support in the Kua
 - **Extension policies** (OIDCPolicy, PlanPolicy) can target GRPCRoute resources via the standard `targetRef` field
 - **Infrastructure policies** (DNSPolicy, TLSPolicy, TelemetryPolicy) continue to work when applied to Gateways with attached GRPCRoutes
 
+This proposal also adds gRPC well-known attributes (`grpc.service`, `grpc.method`) to improve user experience when writing policy conditions and rate limit counters for gRPC traffic.
+
 TokenRateLimitPolicy is explicitly excluded as it requires protobuf response body parsing for token counting, which is beyond the scope of this proposal.
 
 **Note on TelemetryPolicy:** TelemetryPolicy is categorized as an infrastructure policy because it currently only supports Gateway-level targeting (XValidation: `self.kind == 'Gateway'`), not route-level targeting. It works identically for Gateways with HTTPRoute or GRPCRoute attachments, requiring no GRPCRoute-specific changes.
@@ -26,6 +28,7 @@ TokenRateLimitPolicy is explicitly excluded as it requires protobuf response bod
 5. Integrate GRPCRoutes into the existing topology graph
 6. Provide example applications and documentation for gRPC use cases
 7. Maintain full backward compatibility with existing HTTPRoute-based workflows
+8. Add gRPC well-known attributes (`grpc.service`, `grpc.method`) for improved UX in `when` clauses and rate limit counters
 
 ## Non-Goals
 
@@ -36,10 +39,8 @@ TokenRateLimitPolicy is explicitly excluded as it requires protobuf response bod
 
    This is a significant effort that warrants its own RFC if there is future demand.
 
-2. **Changes to backend services** - Authorino, Limitador, and WASM shim require no modifications
-3. **New Well-Known Attributes** - RFC 0002 already supports HTTP/2; gRPC uses standard `request.url_path`
-4. **gRPC-specific convenience attributes** - Optional future enhancement (`grpc.service`, `grpc.method`)
-5. **APIProduct CRD** - Developer portal feature, separate domain from traffic policy
+2. **Changes to backend services** - Authorino and Limitador require no modifications for GRPCRoute support (WASM shim requires changes for gRPC well-known attributes - see Goal #8)
+3. **APIProduct CRD** - Developer portal feature, separate domain from traffic policy
 
 ## Requirements
 
@@ -65,9 +66,11 @@ gRPC runs over HTTP/2, not alongside it. From Envoy's perspective, a gRPC reques
 | `request.url_path` | `/api/users/123` | `/package.Service/Method` |
 | `request.headers` | Standard headers | HTTP/2 headers + gRPC metadata |
 | `request.protocol` | `HTTP/1.1` or `HTTP/2` | `HTTP/2` |
+| `grpc.service` | - | `UserService` (from `/UserService/GetUser`) |
+| `grpc.method` | - | `GetUser` (from `/UserService/GetUser`) |
 
 This means:
-- **No changes needed to WASM shim** - CEL predicates against HTTP attributes work for gRPC
+- **No changes needed to WASM shim for basic GRPCRoute support** - CEL predicates against HTTP attributes work for gRPC (WASM shim changes are needed only for gRPC well-known attributes - see Task 10)
 - **No changes needed to Authorino** - Receives AuthConfig CRDs with standard predicates
 - **No changes needed to Limitador** - Counts requests by descriptors, protocol-agnostic
 
@@ -203,6 +206,8 @@ spec:
 |-----------|------------|-------------|
 | policy-machinery | `kuadrant/policy-machinery` | Controller-layer wiring (machinery types/topology already exist) |
 | kuadrant-operator | `kuadrant/kuadrant-operator` | CRD validation, RBAC, watchers, topology, predicates, reconcilers |
+| wasm-shim | `kuadrant/wasm-shim` | gRPC request detection, path parsing, new well-known attributes |
+| architecture (RFC 0002) | `kuadrant/architecture` | Add `grpc.service` and `grpc.method` to Well-Known Attributes specification |
 | testsuite | `kuadrant/testsuite` | GRPCRoute class, gRPC backend, E2E tests |
 
 #### Affected Policies (kuadrant-operator)
@@ -250,9 +255,7 @@ Without these RBAC permissions, watchers and reconcilers will fail with permissi
 |-----------|----------------|
 | Authorino / Authorino Operator | Receives AuthConfig CRDs - protocol agnostic |
 | Limitador / Limitador Operator | Receives limit definitions - protocol agnostic |
-| WASM Shim | Evaluates CEL against HTTP/2 attributes - works for gRPC |
 | DNS Operator | Operates on Gateway listeners - route type irrelevant |
-| RFC 0002 (Well-Known Attributes) | Already supports HTTP/2 |
 
 #### Kuadrant Operator Changes
 
@@ -296,11 +299,11 @@ For gRPC requests, `request.method` will always be `POST` because that is the un
 **Rationale:** Well-Known Attributes are provided by Envoy via the Proxy-Wasm API and represent what Envoy sees on the wire (HTTP/2). The route type (HTTPRoute vs GRPCRoute) is a Gateway API concept for routing configuration, not a data plane protocol distinction. Mixing these concerns would create inconsistent semantics where the same attribute has different meanings based on the Kubernetes resource type rather than the actual protocol.
 
 **Alternative considered:** Making `request.method` context-aware, returning the gRPC method name (parsed from the path) when used with GRPCRoute. This was rejected because:
-1. It would require WASM shim changes to detect gRPC requests (via `content-type: application/grpc`) and parse paths (out of scope for this proposal)
+1. It would require WASM shim changes to detect gRPC requests (via `content-type: application/grpc`) and parse paths
 2. It creates inconsistent attribute semantics where `request.method` means "HTTP method" for HTTPRoute but "gRPC method name" for GRPCRoute
 3. It violates the principle that Well-Known Attributes reflect the wire protocol, not the Kubernetes resource configuration
 
-**Future enhancement:** New gRPC-specific attributes (`grpc.service`, `grpc.method`) could be added later as separate attributes without breaking existing behavior or requiring changes to `request.method` semantics. This approach preserves protocol-accurate WKAs while providing gRPC-specific convenience attributes for policy authors.
+**gRPC-specific well-known attributes:** The attributes `grpc.service` and `grpc.method` will be implemented as separate well-known attributes without breaking existing behavior or requiring changes to `request.method` semantics. This approach preserves protocol-accurate WKAs while providing gRPC-specific attributes for policy authors.
 
 #### GRPCRouteMatch Predicate Patterns
 
@@ -332,14 +335,47 @@ An empty GRPCRouteMatch (no method, no headers) should return empty predicates, 
 6. Oldest Route based on creation timestamp (tie-breaker)
 7. Alphabetical order by `{namespace}/{name}` (tie-breaker)
 
-### Future: gRPC Convenience Attributes
+### gRPC Well-Known Attributes
 
-The following attributes could be added as a future enhancement to improve UX for `when` clauses and `counters`:
+The following well-known attributes improve UX for `when` clauses and rate limit counters:
 
-- `request.grpc.service` — extracted from `request.url_path` (e.g., `UserService` from `/UserService/GetUser`)
-- `request.grpc.method` — extracted from `request.url_path` (e.g., `GetUser` from `/UserService/GetUser`)
+- `grpc.service` — extracted from `request.url_path` (e.g., `UserService` from `/UserService/GetUser`)
+- `grpc.method` — extracted from `request.url_path` (e.g., `GetUser` from `/UserService/GetUser`)
 
-This would require WASM shim changes to detect gRPC requests (via `content-type: application/grpc`) and parse the URL path into components. The internal predicate generation should continue using `request.url_path` regardless, as using convenience attributes internally would create a hard dependency on WASM shim changes that must land before any GRPCRoute support can ship.
+**Implementation approach:**
+- WASM shim detects gRPC requests via `content-type: application/grpc` header
+- Path parsing extracts service and method components from `/Service/Method` format
+- Attributes are registered as well-known attributes alongside existing `request.*` attributes
+- Internal predicate generation continues using `request.url_path` to avoid coupling
+
+**Note:** These attributes are **optional** for policy authors. All existing predicates using `request.url_path` continue to work. These well-known attributes provide convenience for policy conditions like:
+```yaml
+when:
+  - predicate: grpc.service == 'UserService'
+  - predicate: grpc.method == 'GetUser'
+```
+
+#### Behavior with Non-gRPC Requests
+
+These attributes return empty string (`""`) when:
+- Request is not gRPC (`content-type` header is not `application/grpc`)
+- Path format doesn't match `/Service/Method` pattern
+
+**Important:** When applying policies to Gateways with mixed HTTPRoute and GRPCRoute attachments, gRPC well-known attributes will be empty for HTTP traffic. This can lead to unexpected behavior with negation logic or counters.
+
+**Best practice:** Combine gRPC attribute checks with protocol detection:
+```yaml
+# Recommended: Explicit gRPC check for Gateway-level policies
+when:
+  - predicate: request.headers['content-type'].startsWith('application/grpc')
+  - predicate: grpc.service == 'UserService'
+
+# Avoid: Could match HTTP traffic unexpectedly
+when:
+  - predicate: grpc.service != 'AdminService'  # "" != 'AdminService' is true for HTTP!
+```
+
+**For route-level policies:** If your policy targets a specific GRPCRoute (not a Gateway), you don't need the protocol check since only gRPC traffic flows through GRPCRoutes.
 
 ### Security Considerations
 
@@ -358,9 +394,9 @@ Incomplete implementation could cause silent policy bypass. All components docum
 
 ## Implementation Plan
 
-Work is organized into 9 tasks across 4 repositories. Each task delivers independently testable, working functionality and can be reviewed and merged separately while respecting dependencies.
+Work is organized into 10 tasks across 5 repositories. Each task delivers independently testable, working functionality and can be reviewed and merged separately while respecting dependencies.
 
-Tasks are structured so that each policy-specific task includes full end-to-end functionality (predicate generation, reconciler updates, gateway provider wiring, and integration tests), ensuring that each completed task delivers working features rather than partial implementations.
+Tasks are structured so that each policy-specific task includes full end-to-end functionality (predicate generation, reconciler updates, gateway provider wiring, and integration tests), ensuring that each completed task delivers working features rather than partial implementations. Task 10 (gRPC well-known attributes) can be developed in parallel with operator work (Tasks 3-7) since the WASM shim implementation is independent and the operator continues using `request.url_path` patterns internally.
 
 ## Testing Strategy
 
@@ -396,7 +432,7 @@ Tasks are structured so that each policy-specific task includes full end-to-end 
 
 ### E2E Tests (testsuite)
 
-The `kuadrant/testsuite` repository provides the broader E2E test coverage following the existing HTTPRoute test patterns. This includes a `GRPCRoute` class implementing the `GatewayRoute` interface, a gRPC client wrapper, and test cases mirroring the existing HTTPRoute suite (auth enforcement, rate limiting, section targeting, deletion reconciliation, policy inheritance). See Task 10 for details.
+The `kuadrant/testsuite` repository provides the broader E2E test coverage following the existing HTTPRoute test patterns. This includes a `GRPCRoute` class implementing the `GatewayRoute` interface, a gRPC client wrapper, and test cases mirroring the existing HTTPRoute suite (auth enforcement, rate limiting, section targeting, deletion reconciliation, policy inheritance). See Task 9 for details.
 
 ## Execution
 
@@ -423,11 +459,14 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
 - [ ] **Task 7: kuadrant-operator - GRPCRoute Policy Discoverability Reconciler** (depends on Tasks 5, 6)
   Create GRPCRoutePolicyDiscoverabilityReconciler to add status conditions to GRPCRoutes showing which policies affect them.
 
-- [ ] **Task 8: kuadrant-operator - Examples & Documentation** (depends on Tasks 2, 7)
-  Create example manifests and user guide documentation for gRPC with all supported policies, including grpcurl verification commands.
+- [ ] **Task 8: kuadrant-operator - Examples & Documentation** (depends on Tasks 2, 7, optionally 10)
+  Create example manifests and user guide documentation for gRPC with all supported policies, including grpcurl verification commands. Examples should demonstrate both `request.url_path` patterns and gRPC well-known attributes (if Task 10 is complete).
 
-- [ ] **Task 9: testsuite - GRPCRoute E2E Test Coverage** (depends on Tasks 2, 7)
-  Add GRPCRoute support to the testsuite framework and E2E tests mirroring existing HTTPRoute test patterns.
+- [ ] **Task 9: testsuite - GRPCRoute E2E Test Coverage** (depends on Tasks 2, 7, optionally 10)
+  Add GRPCRoute support to the testsuite framework and E2E tests mirroring existing HTTPRoute test patterns. Test coverage for gRPC well-known attributes is optional but recommended.
+
+- [ ] **Task 10: wasm-shim & RFC 0002 - gRPC Well-Known Attributes** (no blockers - can be developed in parallel)
+  Implement `grpc.service` and `grpc.method` well-known attributes in the WASM shim for improved UX in policy conditions and rate limit counters. Update RFC 0002 specification with gRPC well-known attributes documentation.
 
 ### Completed
 
@@ -495,19 +534,37 @@ All existing `request.*` Well-Known Attributes apply directly to gRPC traffic. T
 
 ### "Do we need gRPC-specific Well-Known Attributes?"
 
-**Not required for GRPCRoute support.** RFC 0002 explicitly supports HTTP/2, and the same `request.*` attributes work for both HTTP and gRPC:
+**Not required for basic GRPCRoute support, but included for improved UX.** RFC 0002 explicitly supports HTTP/2, and the same `request.*` attributes work for both HTTP and gRPC:
 - HTTP: `request.url_path == '/api/users'`
 - gRPC: `request.url_path == '/UserService/GetUser'`
 
 Note that `request.method` will always be `POST` for gRPC requests, as gRPC uses HTTP/2 POST for all calls. To match on the gRPC method itself, use `request.url_path` which contains the full `/Service/Method` path.
 
-**Future enhancement:** Convenience attributes like `grpc.service` and `grpc.method` could parse the path for better UX when writing policy conditions, but are not required for this proposal.
+**Additional well-known attributes:** This proposal adds `grpc.service` and `grpc.method` attributes to provide better UX when writing policy conditions and rate limit counters, but these are optional—all GRPCRoute support works using `request.url_path`.
 
 ### "Do Authorino and Limitador need changes for gRPC?"
 
 **No changes required.** These components receive generated artifacts (AuthConfig CRDs, limit definitions) that are protocol-agnostic. The WASM filter evaluates CEL predicates against HTTP/2 attributes, which works identically for gRPC because gRPC runs over HTTP/2.
 
 From Authorino's perspective, a gRPC request looks like an HTTP/2 POST with specific path and header patterns. From Limitador's perspective, rate limit descriptors are built from CEL expressions regardless of the underlying protocol. Both components process gRPC traffic correctly without any code changes.
+
+### "What happens to gRPC well-known attributes for HTTP requests?"
+
+**They return empty string.** When `grpc.service` or `grpc.method` are used in policies applied to Gateways with mixed HTTP and gRPC traffic:
+
+- For gRPC requests: Attributes contain the parsed service/method
+- For HTTP requests: Attributes are empty string (`""`)
+
+**Watch out for negation logic:** A condition like `grpc.service != 'AdminService'` will be `true` for all HTTP traffic since `"" != 'AdminService'`.
+
+**Best practice for mixed traffic:** Explicitly check for gRPC protocol first:
+```yaml
+when:
+  - predicate: request.headers['content-type'].startsWith('application/grpc')
+  - predicate: grpc.service == 'UserService'
+```
+
+**For route-level policies:** If your policy targets a specific GRPCRoute (not a Gateway), you don't need the protocol check since only gRPC traffic flows through GRPCRoutes.
 
 ---
 
@@ -526,6 +583,11 @@ From Authorino's perspective, a gRPC request looks like an HTTP/2 POST with spec
 ### Kuadrant
 - [Well-Known Attributes (RFC 0002)](https://github.com/Kuadrant/architecture/blob/main/rfcs/0002-well-known-attributes.md)
 - [policy-machinery PR #16 — GRPCRoute types](https://github.com/Kuadrant/policy-machinery/pull/16)
+- [wasm-shim repository](https://github.com/Kuadrant/wasm-shim) — Proxy-Wasm module for Envoy integration
+
+### CEL & Proxy-Wasm
+- [Common Expression Language (CEL) specification](https://github.com/google/cel-spec)
+- [Proxy-Wasm specification](https://github.com/proxy-wasm/spec) — WebAssembly for Proxies (ABI specification)
 
 ### Candidate gRPC Test Images
 - [Istio echo](https://github.com/istio/istio/tree/master/pkg/test/echo) — multi-protocol server (HTTP, gRPC, TCP)
