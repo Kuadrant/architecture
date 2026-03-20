@@ -116,15 +116,18 @@ GRPCRouteMatch translates to CEL predicates using standard HTTP attributes:
 
 Route-targeting policies (AuthPolicy, RateLimitPolicy, OIDCPolicy, PlanPolicy) will accept `GRPCRoute` as a valid `targetRef` kind. The policy structure is identical to HTTPRoute — only the `targetRef` changes.
 
-**Policies supporting GRPCRoute:**
+**Policies that can directly target GRPCRoute:**
 - **Data plane policies**: AuthPolicy, RateLimitPolicy
 - **Extension policies**: OIDCPolicy, PlanPolicy
-- **Infrastructure policies**: DNSPolicy, TLSPolicy, TelemetryPolicy (target Gateways, not routes directly)
+
+**Policies that work with GRPCRoute indirectly (via Gateway targeting):**
+- **Infrastructure policies**: DNSPolicy, TLSPolicy, TelemetryPolicy
+  - These policies target Gateways, not routes
+  - They work identically whether the Gateway has HTTPRoute or GRPCRoute attachments
+  - No GRPCRoute-specific changes needed (verification only)
 
 **Policies excluded:**
 - **TokenRateLimitPolicy**: Requires protobuf response body parsing (see Non-Goals)
-
-**Note:** TelemetryPolicy is Gateway-only (XValidation: `self.kind == 'Gateway'`) and does not support route-level targeting for either HTTPRoute or GRPCRoute. It works identically for Gateways regardless of attached route types.
 
 **Example - RateLimitPolicy targeting HTTPRoute (existing):**
 ```yaml
