@@ -1,7 +1,7 @@
 # X.509 Client Certificate Authentication in Kuadrant AuthPolicy
 
 - Feature Name: `x509-client-cert-authpolicy`
-- Status: **Draft**
+- Status: **Implementable**
 - Start Date: 2026-03-03
 - Issue tracking: [Kuadrant/architecture#140](https://github.com/Kuadrant/architecture/issues/140)
 
@@ -1135,33 +1135,45 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
 ## Open Questions
 
 1. **XFCC Format Variations**:
-   - [ ] Verify XFCC header format consistency across Istio, Envoy Gateway, and other Gateway implementations
-   - [ ] Document any implementation-specific quirks or limitations
-   - [ ] Decision: Should Authorino support multiple XFCC formats, or standardize on Envoy format?
+   - [x] Verify XFCC header format consistency across Istio, Envoy Gateway, and other Gateway implementations
+   - [x] Document any implementation-specific quirks or limitations
+   - [x] Decision: Should Authorino support multiple XFCC formats, or standardize on Envoy format?
+
+   _Decision:_ Authorino will support the standard Envoy XFCC format, which is widely adopted. Documentation will note that some implementations may have variations and users should verify their gateway's XFCC format.
 
 2. **API Versioning**:
-   - [ ] Should the new `source` field be added to Authorino v1beta3 or require a new v1beta4?
-   - [ ] Recommendation: Add to v1beta3 as optional field (backward compatible)
+   - [x] Should the new `source` field be added to Authorino v1beta3 or require a new v1beta4?
+   - [x] Recommendation: Add to v1beta3 as optional field (backward compatible)
+
+   _Decision:_ Add to v1beta3 as optional field (backward compatible)
 
 3. **Certificate Chain Handling**:
-   - [ ] How should Authorino handle certificate chains in XFCC?
-   - [ ] Should it validate the entire chain or only the leaf certificate?
+   - [x] How should Authorino handle certificate chains in XFCC?
+   - [x] Should it validate the entire chain or only the leaf certificate?
    - [ ] Current behavior with `attributes.source.certificate`?
 
+   _Decision:_ Authorino should validate only the leaf certificate against trusted CAs. This is consistent with current x509 authentication implemented in Authorino. Moreover, in most cases (tiers 1 and 2), the gateway will also validate the certificate chain at TLS level, providing defence in depth.
+
 4. **Header Size Limits**:
-   - [ ] What are the practical limits for XFCC header size?
-   - [ ] Should there be a warning/error for excessively large certificate chains?
-   - [ ] Document recommended maximum certificate chain length
+   - [x] What are the practical limits for XFCC header size?
+   - [x] Should there be a warning/error for excessively large certificate chains?
+   - [x] Document recommended maximum certificate chain length
+
+   _Decision:_ Due to maximum header size limit of 64KB (HTTP/2), large chains of certificates may be trucanted and/or require configuration adjustments in the gateway. Therefore, `Cert` (single) should be preferred and `Chain` (full) avoided if possible. Documentation will include warnings about header size limits and recommend keeping certificate chains short.
 
 5. **Multi-Certificate Support**:
-   - [ ] Can a client present multiple certificates?
-   - [ ] How does XFCC represent this (comma-separated, multiple headers)?
-   - [ ] Should Authorino support selecting specific certificates from a set?
+   - [x] Can a client present multiple certificates?
+   - [x] How does XFCC represent this (comma-separated, multiple headers)?
+   - [x] Should Authorino support selecting specific certificates from a set?
+
+   _Decision:_ Presenting multiple client certificates will not be supported. The XFCC header will be expected to contain a single certificate (the leaf certificate). If multiple certificates are present (multiple headers), Authorino will use the first one and ignore the rest. Documentation will recommend against using multiple certificates in XFCC.
 
 6. **Proxy Configuration Guidance**:
-   - [ ] Should documentation include decision tree for choosing between Tier 1/2/3?
-   - [ ] Should there be a warning/validation in AuthPolicy when using `x509.source.header` without proper gateway configuration?
-   - [ ] How can users verify their gateway is properly configured for XFCC?
+   - [x] Should documentation include decision tree for choosing between Tier 1/2/3?
+   - [x] Should there be a warning/validation in AuthPolicy when using `x509.source.header` without proper gateway configuration?
+   - [x] How can users verify their gateway is properly configured for XFCC?
+
+   _Decision:_ Documentation will include a decision tree for choosing the appropriate proxy configuration tier based on user requirements and constraints. No warnings nor validation will be added to the AuthPolicy when using `x509.source.header` without proper gateway configuration. No specific tools will be provided for users to verify their configuration.
 
 7. **Automatic Gateway Configuration** (Future):
    - [ ] Should Kuadrant offer opt-in automatic injection of `spec.tls.frontend.default.validation` in a future version?
@@ -1172,14 +1184,14 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
 ## Implementation TODOs
 
 ### Research Phase
-- [ ] Analyze XFCC header format in Envoy documentation
-- [ ] Test XFCC header with Istio gateway in local environment
-- [ ] Test XFCC header with Envoy Gateway (if applicable)
-- [ ] Verify wasm-shim forwards XFCC header without modification
-- [ ] Identify certificate chain maximum size in XFCC
+- [x] Analyze XFCC header format in Envoy documentation
+- [x] Test XFCC header with Istio gateway in local environment
+- [x] Test XFCC header with Envoy Gateway (if applicable)
+- [x] Verify wasm-shim forwards XFCC header without modification
+- [x] Identify certificate chain maximum size in XFCC
 
 ### Authorino Development
-- [ ] Design API types for `X509CertificateSource`
+- [x] Design API types for `X509CertificateSource`
 - [ ] Implement XFCC header parser
 - [ ] Implement certificate extraction from XFCC
 - [ ] Add backward compatibility handling
