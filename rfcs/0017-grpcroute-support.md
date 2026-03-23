@@ -209,7 +209,8 @@ spec:
 |-----------|------------|-------------|
 | policy-machinery | `kuadrant/policy-machinery` | Controller-layer wiring (machinery types/topology already exist) |
 | kuadrant-operator | `kuadrant/kuadrant-operator` | CRD validation, RBAC, watchers, topology, predicates, reconcilers |
-| wasm-shim | `kuadrant/wasm-shim` | gRPC request detection, path parsing, new well-known attributes |
+| wasm-shim | `kuadrant/wasm-shim` | gRPC request detection, path parsing, new well-known attributes for CEL evaluation |
+| authorino | `kuadrant/authorino` | Extract `grpc.service` and `grpc.method` well-known attributes for authorization evaluators |
 | architecture (RFC 0002) | `kuadrant/architecture` | Add `grpc.service` and `grpc.method` to Well-Known Attributes specification |
 | testsuite | `kuadrant/testsuite` | GRPCRoute class, gRPC backend, E2E tests |
 
@@ -256,7 +257,7 @@ Without these RBAC permissions, watchers and reconcilers will fail with permissi
 
 | Component | Why No Changes |
 |-----------|----------------|
-| Authorino / Authorino Operator | Receives AuthConfig CRDs - protocol agnostic |
+| Authorino Operator | Manages AuthConfig CRDs - no protocol-specific logic |
 | Limitador / Limitador Operator | Receives limit definitions - protocol agnostic |
 | DNS Operator | Operates on Gateway listeners - route type irrelevant |
 
@@ -397,9 +398,9 @@ Incomplete implementation could cause silent policy bypass. All components docum
 
 ## Implementation Plan
 
-Work is organized into 10 tasks across 5 repositories. Each task delivers independently testable, working functionality and can be reviewed and merged separately while respecting dependencies.
+Work is organized into 11 tasks across 6 repositories. Each task delivers independently testable, working functionality and can be reviewed and merged separately while respecting dependencies.
 
-Tasks are structured so that each policy-specific task includes full end-to-end functionality (predicate generation, reconciler updates, gateway provider wiring, and integration tests), ensuring that each completed task delivers working features rather than partial implementations. Task 10 (gRPC well-known attributes) can be developed in parallel with operator work (Tasks 3-7) since the WASM shim implementation is independent and the operator continues using `request.url_path` patterns internally.
+Tasks are structured so that each policy-specific task includes full end-to-end functionality (predicate generation, reconciler updates, gateway provider wiring, and integration tests), ensuring that each completed task delivers working features rather than partial implementations. Tasks 10 and 11 (gRPC well-known attributes in WASM shim and Authorino) can be developed in parallel with operator work (Tasks 3-7) since these implementations are independent and the operator continues using `request.url_path` patterns internally.
 
 ## Testing Strategy
 
@@ -470,6 +471,9 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
 
 - [ ] **Task 10: wasm-shim & RFC 0002 - gRPC Well-Known Attributes** (no blockers - can be developed in parallel)
   Implement `grpc.service` and `grpc.method` well-known attributes in the WASM shim for improved UX in policy conditions and rate limit counters. Update RFC 0002 specification with gRPC well-known attributes documentation.
+
+- [ ] **Task 11: authorino - gRPC Well-Known Attributes** (no blockers - can be developed in parallel)
+  Extract `grpc.service` and `grpc.method` from gRPC requests and add to authorization JSON for use in OPA policies, CEL authorization rules, and other evaluators.
 
 ### Completed
 
