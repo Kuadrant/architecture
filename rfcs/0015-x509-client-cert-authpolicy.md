@@ -77,7 +77,7 @@ spec:
         # If omitted, defaults to `source.certificate` (CheckRequest attributes)
         source:
           # Option 1: Extract from XFCC header (Envoy format)
-          xfcc: "x-forwarded-client-cert"
+          xfccHeader: "x-forwarded-client-cert"
           # Option 2: Extract from HTTP header (RFC 9440 format)
           # clientCertHeader: "client-cert"
           # Option 3: Extract using CEL expression
@@ -91,7 +91,7 @@ spec:
 ```
 
 **Behavior**:
-- When `source.xfcc` is specified, Authorino extracts the certificate from the named HTTP header using Envoy XFCC format
+- When `source.xfccHeader` is specified, Authorino extracts the certificate from the named HTTP header using Envoy XFCC format
 - When `source.clientCertHeader` is specified, Authorino extracts the certificate from the named HTTP header using RFC 9440 format
 - When `source.expression` is specified, Authorino evaluates the CEL expression to extract the certificate
 - When `source` is omitted, Authorino uses the current behavior of reading from `attributes.source.certificate` (backward compatibility)
@@ -219,7 +219,7 @@ For Tier 3, there are two approaches:
 ```yaml
 x509:
   source:
-    xfcc: "x-forwarded-client-cert"
+    xfccHeader: "x-forwarded-client-cert"
 ```
 
 **Gateway Configuration** (Istio example):
@@ -364,12 +364,12 @@ type X509AuthenticationSpec struct {
 }
 
 // X509CertificateSource defines the source from which to extract the client certificate
-// Only one of XFCC, ClientCertHeader, or Expression should be specified
+// Only one of XFCCHeader, ClientCertHeader, or Expression should be specified
 type X509CertificateSource struct {
-    // XFCC specifies the HTTP header name containing the client certificate in Envoy XFCC format
+    // XFCCHeader specifies the HTTP header name containing the client certificate in Envoy XFCC format
     // Typically "x-forwarded-client-cert" for certificates forwarded by Envoy-based proxies
     // +optional
-    XFCC string `json:"xfcc,omitempty"`
+    XFCCHeader string `json:"xfccHeader,omitempty"`
 
     // ClientCertHeader specifies the HTTP header name containing the client certificate in RFC 9440 format
     // For certificates forwarded according to RFC 9440 specification
@@ -385,10 +385,10 @@ type X509CertificateSource struct {
 
 **Default behavior**:
 - If `source` is not specified: backward compatible behavior (read from `attributes.source.certificate`)
-- If `source.xfcc` is specified: extract certificate from the named HTTP header using Envoy XFCC format
+- If `source.xfccHeader` is specified: extract certificate from the named HTTP header using Envoy XFCC format
 - If `source.clientCertHeader` is specified: extract certificate from the named HTTP header using RFC 9440 format
 - If `source.expression` is specified: evaluate the CEL expression to extract the certificate
-- If multiple fields are specified: `xfcc` takes precedence, followed by `clientCertHeader`, then `expression`
+- If multiple fields are specified: `xfccHeader` takes precedence, followed by `clientCertHeader`, then `expression`
 
 ## Kuadrant AuthPolicy CRD
 
@@ -410,7 +410,7 @@ spec:
         "x509-from-gateway":
           x509:
             source:
-              xfcc: "x-forwarded-client-cert"
+              xfccHeader: "x-forwarded-client-cert"
             selector:
               matchLabels:
                 app.kubernetes.io/name: trusted-client
@@ -428,8 +428,8 @@ spec:
    - Add `Source` field to `X509AuthenticationSpec`
 
 2. **X.509 Authenticator** (`pkg/evaluators/identity/x509.go`):
-   - Add logic to check which source type is configured (`xfcc`, `clientCertHeader`, or `expression`)
-   - If `xfcc` is configured, extract certificate from the HTTP request header using Envoy XFCC format
+   - Add logic to check which source type is configured (`xfccHeader`, `clientCertHeader`, or `expression`)
+   - If `xfccHeader` is configured, extract certificate from the HTTP request header using Envoy XFCC format
    - If `clientCertHeader` is configured, extract certificate from the HTTP request header using RFC 9440 format
    - If `expression` is configured, evaluate the CEL expression to extract the certificate
    - Parse the appropriate header format (URL-encoded PEM for XFCC, RFC 9440 format for clientCertHeader)
@@ -476,7 +476,7 @@ spec:
    - Update CRD manifests
 
 2. **AuthPolicy-to-AuthConfig Translation** (`internal/controller/authconfigs_reconciler.go` or similar):
-   - Propagate `authentication.<name>.x509.source` (including `xfcc`, `clientCertHeader`, and `expression` fields) from AuthPolicy to generated AuthConfig
+   - Propagate `authentication.<name>.x509.source` (including `xfccHeader`, `clientCertHeader`, and `expression` fields) from AuthPolicy to generated AuthConfig
    - No additional business logic required
 
 3. **Documentation**:
@@ -849,7 +849,7 @@ Documentation must explicitly warn users:
 
 ### Kuadrant Operator
 - **API Translation**:
-  - AuthPolicy with `x509.source.xfcc` → AuthConfig with same config
+  - AuthPolicy with `x509.source.xfccHeader` → AuthConfig with same config
   - AuthPolicy with `x509.source.clientCertHeader` → AuthConfig with same config
   - AuthPolicy with `x509.source.expression` → AuthConfig with same config
   - AuthPolicy without `source` → AuthConfig with default behavior
@@ -876,7 +876,7 @@ Documentation must explicitly warn users:
   - Gateway with `spec.tls.frontend.default.validation` configured
   - CA certificate ConfigMap for gateway validation
   - CA certificate Secret(s) with labels for Authorino validation
-  - AuthPolicy with `x509.source.xfcc: "x-forwarded-client-cert"`
+  - AuthPolicy with `x509.source.xfccHeader: "x-forwarded-client-cert"`
   - HTTPRoute bound to AuthPolicy
 - Test:
   - Client with valid certificate → 200 OK
@@ -888,7 +888,7 @@ Documentation must explicitly warn users:
   - Gateway with EnvoyFilter configuring TLS client validation
   - CA certificate file mounted in gateway pod
   - CA certificate Secret(s) with labels for Authorino validation
-  - AuthPolicy with `x509.source.xfcc: "x-forwarded-client-cert"`
+  - AuthPolicy with `x509.source.xfccHeader: "x-forwarded-client-cert"`
   - HTTPRoute bound to AuthPolicy
 - Test:
   - Same as Scenario 1
@@ -898,7 +898,7 @@ Documentation must explicitly warn users:
   - Gateway with `forwardClientCertDetails: ALWAYS_FORWARD_ONLY` annotation
   - No gateway-level TLS client validation configured
   - CA certificate Secret(s) with labels for Authorino validation
-  - AuthPolicy with `x509.source.xfcc: "x-forwarded-client-cert"`
+  - AuthPolicy with `x509.source.xfccHeader: "x-forwarded-client-cert"`
   - HTTPRoute bound to AuthPolicy
 - Test:
   - Client with valid certificate in XFCC header → 200 OK (validated by Authorino only)
@@ -926,7 +926,7 @@ Documentation must explicitly warn users:
 - Test: Client certificate signed by intermediate CA (full chain in XFCC)
 
 **Test Scenario 5: Custom Header Names and Formats**
-- Setup 5a: AuthPolicy with `x509.source.xfcc: "x-custom-xfcc-header"`
+- Setup 5a: AuthPolicy with `x509.source.xfccHeader: "x-custom-xfcc-header"`
 - Setup 5b: AuthPolicy with `x509.source.clientCertHeader: "client-cert"`
 - Setup 5c: AuthPolicy with `x509.source.expression: request.headers["pem-cert"]`
 - Modify gateway to use custom headers (implementation-specific)
@@ -1144,7 +1144,7 @@ def x509_auth_policy(route, module_label):
                     "authentication": {
                         "x509-authn": {
                             "x509": {
-                                "source": {"xfcc": "x-forwarded-client-cert"},
+                                "source": {"xfccHeader": "x-forwarded-client-cert"},
                                 "selector": {
                                     "matchLabels": {"app": "trusted-client"}
                                 }
