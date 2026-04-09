@@ -1267,32 +1267,35 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
 
 ### Authorino Development
 - [x] Design API types for `X509CertificateSource`
-- [ ] Implement XFCC header parser
-- [ ] Implement certificate extraction from XFCC
-- [ ] Add backward compatibility handling
-- [ ] Write unit tests for XFCC parsing
-- [ ] Write integration tests with mocked headers
-- [ ] Update API documentation
-- [ ] Update AuthConfig examples
-- [ ] Submit PR to Authorino repository
-- [ ] Address code review feedback
+- [x] Implement XFCC header parser
+- [x] Implement certificate extraction from XFCC
+- [x] Add backward compatibility handling
+- [x] Write unit tests for XFCC parsing
+- [x] Write integration tests with mocked headers
+- [x] Update API documentation
+- [x] Update AuthConfig examples
+- [x] Submit PR to Authorino repository
+- [x] Address code review feedback
 
 ### Authorino Operator Development
-- [ ] Sync CRD manifests from Authorino
-- [ ] Update example AuthConfigs
-- [ ] Test CRD installation and validation
-- [ ] Submit PR to Authorino Operator repository
+- [x] Sync CRD manifests from Authorino
+- [ ] ~~Update example AuthConfigs~~
+- [x] Test CRD installation and validation
+- [x] Submit PR to Authorino Operator repository
 
 ### Kuadrant Operator Development
-- [ ] Add `X509CertificateSource` types to AuthPolicy API
-- [ ] Update AuthPolicy CRD manifests
-- [ ] Implement AuthPolicy-to-AuthConfig translation
-- [ ] Write controller unit tests
-- [ ] Create comprehensive example (Gateway + AuthPolicy)
-- [ ] Write documentation for AuthPolicy x509 authentication
-- [ ] Document security considerations
-- [ ] Document Gateway API v1.5 requirement
-- [ ] Submit PR to Kuadrant Operator repository
+- [x] Add `X509CertificateSource` types to AuthPolicy API
+- [x] Update AuthPolicy CRD manifests
+- [ ] ~~Implement AuthPolicy-to-AuthConfig translation~~ → Not needed as the controller handles the entire Authorino authentication spec at a deep level – all options of any authentication method, including `x509`, are automatically translated to the AuthConfigs. Translation support was added simply by updating the version of the Authorino API package and the AuthPolicy manifests.
+- [ ] ~~Write controller unit tests~~ → Will be better covered by the e2e tests, given there was no actual code change to the controller logic.
+- [x] Create comprehensive example (Gateway + AuthPolicy)
+- [x] Write documentation for AuthPolicy x509 authentication → Added a user guide focused on Tier 1 and mentions to the propagated API changes (covering part of Tier 3). API docs are taken care of automatically by the updated links to the imported Go types. The rest of the documentation will be covered within the feature docs.
+- [ ] ~~Document security considerations~~ → Will be covered within the feature docs.
+- [x] Document Gateway API v1.5 requirement
+- [x] chore: Update the version of Kubernetes used in the local development environment (for testing) to 1.31+ to ensure Gateway API v1.5 support→ Updated to v1.35.0
+- [x] chore: Update the version of Istio used in the local development environment to 1.28+ to ensure support for Gateway API's `gateways.spec.tls` options → Updated to v1.29.1
+- [x] chore: Update the version of Sail Operator used in the local development environment to 1.28+ to ensure support for Istio 1.28+ → Updated to v1.29.1
+- [x] Submit PR to Kuadrant Operator repository
 
 ### Testing Development
 - [ ] Design e2e test scenarios
