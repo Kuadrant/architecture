@@ -446,18 +446,6 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
 
 ### Todo
 
-- [ ] **Task 1: policy-machinery - GRPCRoute Controller Wiring**
-  Controller-layer wiring for GRPCRoute resources. The machinery layer already has full support via [PR #16](https://github.com/Kuadrant/policy-machinery/pull/16).
-
-- [ ] **Task 2: gRPC Backend Image for Testing & Examples**
-  Select and validate a publicly available gRPC-capable image for use in integration tests, E2E tests, and examples.
-
-- [ ] **Task 3: kuadrant-operator - Core GRPCRoute Infrastructure** (depends on Task 1)
-  Register GRPCRoute watcher, update topology building, and abstract path extraction to support both HTTPRoute and GRPCRoute. Add ClusterRole permissions for grpcroutes and grpcroutes/status.
-
-- [ ] **Task 4: kuadrant-operator - AuthPolicy Support + Data Plane Wiring** (depends on Tasks 2, 3)
-  Enable AuthPolicy to target GRPCRoute with full end-to-end functionality including predicate generation, gateway provider reconcilers (WasmPlugin, auth cluster configs), and integration tests with real gRPC traffic. Update AuthPolicy CRD XValidation to accept GRPCRoute targetRef.
-
 - [ ] **Task 5: kuadrant-operator - RateLimitPolicy Support** (depends on Task 4)
   Enable RateLimitPolicy to target GRPCRoute including ratelimit cluster reconcilers and integration tests with real gRPC traffic. Update RateLimitPolicy CRD XValidation to accept GRPCRoute targetRef.
 
@@ -481,7 +469,17 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
 
 ### Completed
 
-_(No tasks completed yet)_
+- [x] **Task 1: policy-machinery - GRPCRoute Controller Wiring** — [Kuadrant/policy-machinery#65](https://github.com/Kuadrant/policy-machinery/issues/65)
+  Controller-layer wiring for GRPCRoute resources. The machinery layer already has full support via [PR #16](https://github.com/Kuadrant/policy-machinery/pull/16).
+
+- [x] **Task 2: gRPC Backend Image for Testing & Examples** — [Kuadrant/kuadrant-operator#1823](https://github.com/Kuadrant/kuadrant-operator/issues/1823)
+  Select and validate a publicly available gRPC-capable image for use in integration tests, E2E tests, and examples.
+
+- [x] **Task 3: kuadrant-operator - Core GRPCRoute Infrastructure** — [Kuadrant/kuadrant-operator#1820](https://github.com/Kuadrant/kuadrant-operator/issues/1820)
+  Register GRPCRoute watcher, update topology building, and abstract path extraction to support both HTTPRoute and GRPCRoute. Add ClusterRole permissions for grpcroutes and grpcroutes/status.
+
+- [x] **Task 4: kuadrant-operator - AuthPolicy Support + Data Plane Wiring** — [Kuadrant/kuadrant-operator#1821](https://github.com/Kuadrant/kuadrant-operator/issues/1821)
+  Enable AuthPolicy to target GRPCRoute with full end-to-end functionality including predicate generation, gateway provider reconcilers (WasmPlugin, auth cluster configs), and integration tests with real gRPC traffic. Update AuthPolicy CRD XValidation to accept GRPCRoute targetRef.
 
 ---
 
