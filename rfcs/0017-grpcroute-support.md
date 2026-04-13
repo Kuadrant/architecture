@@ -7,10 +7,10 @@
 
 ## Summary
 
-This design document outlines the implementation of GRPCRoute support in the Kuadrant ecosystem. GRPCRoute is a Gateway API resource (GA since v1.1.0) that provides gRPC-native routing semantics. This work enables all Kuadrant policies except TokenRateLimitPolicy to work with GRPCRoute resources:
+This design document outlines the implementation of GRPCRoute support in the Kuadrant ecosystem. GRPCRoute is a Gateway API resource (GA since v1.1.0) that provides gRPC-native routing semantics. This work enables Kuadrant policies to work with GRPCRoute resources:
 
 - **Data plane policies** (AuthPolicy, RateLimitPolicy) can target GRPCRoute resources via the standard `targetRef` field
-- **Extension policies** (OIDCPolicy, PlanPolicy) can target GRPCRoute resources via the standard `targetRef` field
+- **Extension policies** (PlanPolicy) can target GRPCRoute resources via the standard `targetRef` field
 - **Infrastructure policies** (DNSPolicy, TLSPolicy, TelemetryPolicy) continue to work when applied to Gateways with attached GRPCRoutes
 
 This proposal also adds gRPC well-known attributes (`grpc.service`, `grpc.method`) to improve user experience when writing policy conditions and rate limit counters for gRPC traffic.
@@ -22,7 +22,7 @@ TokenRateLimitPolicy is explicitly excluded as it requires protobuf response bod
 ## Goals
 
 1. Enable **data plane policies** (AuthPolicy, RateLimitPolicy) to target GRPCRoute resources via the standard `targetRef` field
-2. Enable **extension policies** (OIDCPolicy, PlanPolicy) to target GRPCRoute resources via the standard `targetRef` field
+2. Enable **extension policies** (PlanPolicy) to target GRPCRoute resources via the standard `targetRef` field
 3. Verify **infrastructure policies** (DNSPolicy, TLSPolicy, TelemetryPolicy) continue to work correctly when applied to Gateways with attached GRPCRoutes
 4. Generate correct CEL predicates from GRPCRouteMatch (service/method matching)
 5. Integrate GRPCRoutes into the existing topology graph
@@ -39,8 +39,16 @@ TokenRateLimitPolicy is explicitly excluded as it requires protobuf response bod
 
    This is a significant effort that warrants its own RFC if there is future demand.
 
-2. **Changes to backend services** - Authorino and Limitador require no modifications for GRPCRoute support (WASM shim requires changes for gRPC well-known attributes - see Goal #8)
-3. **APIProduct CRD** - Developer portal feature, separate domain from traffic policy
+2. **OIDCPolicy support** - OIDCPolicy is explicitly excluded from GRPCRoute support. The OAuth2 authorization code flow implemented by OIDCPolicy is designed for browser-based clients and relies on HTTP 302 redirects and cookie storage. These behaviors are unverified with gRPC-Web clients and incompatible with native gRPC clients. Specific concerns:
+   - **Redirect handling**: gRPC-Web libraries may not follow HTTP 302 redirects or may treat them as protocol errors
+   - **Cookie support**: gRPC-Web implementations may not store/send cookies required for session management
+   - **Content-Type mismatch**: gRPC-Web expects `application/grpc-web` responses but receives standard HTTP redirect headers
+   - **Native gRPC incompatibility**: Native gRPC clients (non-browser) cannot participate in browser-based OAuth flows
+
+   Users needing OIDC authentication for gRPC services should use AuthPolicy directly with JWT validation, which already supports GRPCRoute targets. OIDCPolicy support could be reconsidered in the future if there is validated demand from gRPC-Web use cases and after testing confirms browser redirect/cookie behavior works correctly.
+
+3. **Changes to backend services** - Authorino and Limitador require no modifications for GRPCRoute support (WASM shim requires changes for gRPC well-known attributes - see Goal #8)
+4. **APIProduct CRD** - Developer portal feature, separate domain from traffic policy
 
 ## Requirements
 
@@ -114,11 +122,11 @@ GRPCRouteMatch translates to CEL predicates using standard HTTP attributes:
 
 #### Policy TargetRef Validation
 
-Route-targeting policies (AuthPolicy, RateLimitPolicy, OIDCPolicy, PlanPolicy) will accept `GRPCRoute` as a valid `targetRef` kind. The policy structure is identical to HTTPRoute — only the `targetRef` changes.
+Route-targeting policies (AuthPolicy, RateLimitPolicy, PlanPolicy) will accept `GRPCRoute` as a valid `targetRef` kind. The policy structure is identical to HTTPRoute — only the `targetRef` changes.
 
 **Policies that can directly target GRPCRoute:**
 - **Data plane policies**: AuthPolicy, RateLimitPolicy
-- **Extension policies**: OIDCPolicy, PlanPolicy
+- **Extension policies**: PlanPolicy
 
 **Policies that work with GRPCRoute indirectly (via Gateway targeting):**
 - **Infrastructure policies**: DNSPolicy, TLSPolicy, TelemetryPolicy
@@ -127,7 +135,8 @@ Route-targeting policies (AuthPolicy, RateLimitPolicy, OIDCPolicy, PlanPolicy) w
   - No GRPCRoute-specific changes needed (verification only)
 
 **Policies excluded:**
-- **TokenRateLimitPolicy**: Requires protobuf response body parsing (see Non-Goals)
+- **TokenRateLimitPolicy**: Requires protobuf response body parsing (see Non-Goal #1)
+- **OIDCPolicy**: OAuth2 flow incompatible with gRPC clients (see Non-Goal #2)
 
 **Example - RateLimitPolicy targeting HTTPRoute (existing):**
 ```yaml
@@ -162,7 +171,7 @@ The rest of the policy spec (rules, limits, authentication config, etc.) is iden
 
 Each policy's CRD requires an XValidation marker update to accept GRPCRoute as a valid targetRef kind. These updates are implemented as part of each policy's GRPCRoute support task:
 
-**AuthPolicy, RateLimitPolicy, OIDCPolicy, PlanPolicy** (Tasks 4, 5, 6):
+**AuthPolicy, RateLimitPolicy, PlanPolicy** (Tasks 4, 5, 6):
 ```go
 // Update from:
 // +kubebuilder:validation:XValidation:rule="self.kind == 'HTTPRoute' || self.kind == 'Gateway'"
@@ -171,11 +180,7 @@ Each policy's CRD requires an XValidation marker update to accept GRPCRoute as a
 // +kubebuilder:validation:XValidation:rule="self.kind == 'HTTPRoute' || self.kind == 'GRPCRoute' || self.kind == 'Gateway'"
 ```
 
-**TokenRateLimitPolicy** (Task 3):
-```go
-// Explicitly reject GRPCRoute with clear error message:
-// +kubebuilder:validation:XValidation:rule="self.kind != 'GRPCRoute'",message="TokenRateLimitPolicy does not support GRPCRoute (requires protobuf response parsing)"
-```
+**Policies excluded (TokenRateLimitPolicy, OIDCPolicy):** No XValidation changes needed. These policies' existing validation rules only allow HTTPRoute and Gateway, so GRPCRoute targetRef will be rejected automatically.
 
 After updating markers, run `make generate manifests` to regenerate CRDs.
 
@@ -216,14 +221,14 @@ spec:
 
 #### Affected Policies (kuadrant-operator)
 
-Route-targeting policies (AuthPolicy, RateLimitPolicy, OIDCPolicy, PlanPolicy) require implementation changes to support GRPCRoute. Infrastructure policies work without changes. Implementation requirements differ based on policy architecture:
+Route-targeting policies (AuthPolicy, RateLimitPolicy, PlanPolicy) require implementation changes to support GRPCRoute. Infrastructure policies work without changes. Implementation requirements differ based on policy architecture:
 
 | Policy Type | Policies | Implementation Changes |
 |-------------|----------|----------------------|
 | **Data Plane Policies** | AuthPolicy, RateLimitPolicy | targetRef validation + reconciler updates for GRPCRouteRule iteration + AuthConfig/Limitador generation |
-| **Extension Policies** | OIDCPolicy, PlanPolicy | targetRef validation + event subscriptions (no reconciler logic changes needed) |
+| **Extension Policies** | PlanPolicy | targetRef validation + event subscriptions (no reconciler logic changes needed) |
 | **Infrastructure Policies** | DNSPolicy, TLSPolicy, TelemetryPolicy | No changes: target Gateways not routes, verification only |
-| **Excluded Policies** | TokenRateLimitPolicy | Not supported: requires protobuf response body parsing (see Non-Goal #1) |
+| **Excluded Policies** | TokenRateLimitPolicy, OIDCPolicy | Not supported: TokenRateLimitPolicy requires protobuf response parsing (see Non-Goal #1), OIDCPolicy incompatible with gRPC clients (see Non-Goal #2) |
 
 **Extension policies** use the same WASM shim and event-driven reconciliation as data plane policies, so GRPCRoute support works automatically once the operator infrastructure is in place. These policies only need targetRef validation and event subscription updates — no custom reconciliation logic changes are required.
 
@@ -243,7 +248,7 @@ The operator requires permissions to watch and access GRPCRoute resources:
 
 **Extension Policy ClusterRoles** (`cmd/extensions/*/config/rbac/role.yaml`):
 
-Extension policies (OIDCPolicy, PlanPolicy) require GRPCRoute permissions for their reconcilers to watch and react to GRPCRoute changes:
+Extension policies (PlanPolicy) require GRPCRoute permissions for their reconcilers to watch and react to GRPCRoute changes:
 
 ```yaml
 - apiGroups: ["gateway.networking.k8s.io"]
@@ -421,7 +426,6 @@ Tasks are structured so that each policy-specific task includes full end-to-end 
 - gRPC method-specific policies
 
 **Extension policies:**
-- OIDCPolicy targeting GRPCRoute
 - PlanPolicy targeting GRPCRoute
 
 **Cross-policy scenarios:**
@@ -449,7 +453,7 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
   Select and validate a publicly available gRPC-capable image for use in integration tests, E2E tests, and examples.
 
 - [ ] **Task 3: kuadrant-operator - Core GRPCRoute Infrastructure** (depends on Task 1)
-  Register GRPCRoute watcher, update topology building, and abstract path extraction to support both HTTPRoute and GRPCRoute. Add ClusterRole permissions for grpcroutes and grpcroutes/status. Update TokenRateLimitPolicy XValidation to explicitly reject GRPCRoute with clear error message.
+  Register GRPCRoute watcher, update topology building, and abstract path extraction to support both HTTPRoute and GRPCRoute. Add ClusterRole permissions for grpcroutes and grpcroutes/status.
 
 - [ ] **Task 4: kuadrant-operator - AuthPolicy Support + Data Plane Wiring** (depends on Tasks 2, 3)
   Enable AuthPolicy to target GRPCRoute with full end-to-end functionality including predicate generation, gateway provider reconcilers (WasmPlugin, auth cluster configs), and integration tests with real gRPC traffic. Update AuthPolicy CRD XValidation to accept GRPCRoute targetRef.
@@ -458,7 +462,7 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
   Enable RateLimitPolicy to target GRPCRoute including ratelimit cluster reconcilers and integration tests with real gRPC traffic. Update RateLimitPolicy CRD XValidation to accept GRPCRoute targetRef.
 
 - [ ] **Task 6: kuadrant-operator - Extension Policies Support** (depends on Task 4)
-  Enable extension policies (OIDCPolicy, PlanPolicy) to target GRPCRoute with integration tests. Update OIDCPolicy and PlanPolicy CRD XValidation to accept GRPCRoute targetRef. Add ClusterRole permissions for grpcroutes in each extension policy's RBAC.
+  Enable PlanPolicy to target GRPCRoute with integration tests. Update PlanPolicy CRD XValidation to accept GRPCRoute targetRef. Add ClusterRole permissions for grpcroutes in PlanPolicy's RBAC.
 
 - [ ] **Task 7: kuadrant-operator - GRPCRoute Policy Discoverability Reconciler** (depends on Tasks 5, 6)
   Create GRPCRoutePolicyDiscoverabilityReconciler to add status conditions to GRPCRoutes showing which policies affect them.
