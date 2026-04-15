@@ -217,6 +217,7 @@ spec:
 | wasm-shim | `kuadrant/wasm-shim` | gRPC request detection, path parsing, new well-known attributes for CEL evaluation |
 | authorino | `kuadrant/authorino` | Extract `grpc.service` and `grpc.method` well-known attributes for authorization evaluators |
 | architecture (RFC 0002) | `kuadrant/architecture` | Add `grpc.service` and `grpc.method` to Well-Known Attributes specification |
+| kuadrant-console-plugin | `kuadrant/kuadrant-console-plugin` | UI updates: resource registry, topology visualization, console tabs, GRPCRoute policies page |
 | testsuite | `kuadrant/testsuite` | GRPCRoute class, gRPC backend, E2E tests |
 
 #### Affected Policies (kuadrant-operator)
@@ -403,7 +404,7 @@ Incomplete implementation could cause silent policy bypass. All components docum
 
 ## Implementation Plan
 
-Work is organized into 11 tasks across 6 repositories. Each task delivers independently testable, working functionality and can be reviewed and merged separately while respecting dependencies.
+Work is organized into 12 tasks across 7 repositories. Each task delivers independently testable, working functionality and can be reviewed and merged separately while respecting dependencies.
 
 Tasks are structured so that each policy-specific task includes full end-to-end functionality (predicate generation, reconciler updates, gateway provider wiring, and integration tests), ensuring that each completed task delivers working features rather than partial implementations. Tasks 10 and 11 (gRPC well-known attributes in WASM shim and Authorino) can be developed in parallel with operator work (Tasks 3-7) since these implementations are independent and the operator continues using `request.url_path` patterns internally.
 
@@ -466,6 +467,9 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
 
 - [ ] **Task 11: authorino - gRPC Well-Known Attributes** (no blockers - can be developed in parallel)
   Extract `grpc.service` and `grpc.method` from gRPC requests and add to authorization JSON for use in OPA policies, CEL authorization rules, and other evaluators.
+
+- [ ] **Task 12: kuadrant-console-plugin - GRPCRoute UI Support** (depends on Task 7)
+  Add GRPCRoute support to the OpenShift Console plugin: update resource registry, add GRPCRoute to topology visualization with icon and context menu, add "Policies" tab to GRPCRoute detail pages, create GRPCRoutePoliciesPage component, update RESOURCE_POLICY_MAP to show which policies can target GRPCRoute (excluding OIDCPolicy and TokenRateLimitPolicy).
 
 ### Completed
 
