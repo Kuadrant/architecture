@@ -13,7 +13,7 @@ This design document outlines the implementation of GRPCRoute support in the Kua
 - **Extension policies** (PlanPolicy) can target GRPCRoute resources via the standard `targetRef` field
 - **Infrastructure policies** (DNSPolicy, TLSPolicy, TelemetryPolicy) continue to work when applied to Gateways with attached GRPCRoutes
 
-This proposal also adds gRPC well-known attributes (`grpc.service`, `grpc.method`) to improve user experience when writing policy conditions and rate limit counters for gRPC traffic.
+This proposal also adds gRPC well-known attributes (a `grpc` Optional binding with `service` and `method` fields) to improve user experience when writing policy conditions and rate limit counters for gRPC traffic.
 
 TokenRateLimitPolicy is explicitly excluded as it requires protobuf response body parsing for token counting, which is beyond the scope of this proposal.
 
@@ -28,7 +28,7 @@ TokenRateLimitPolicy is explicitly excluded as it requires protobuf response bod
 5. Integrate GRPCRoutes into the existing topology graph
 6. Provide example applications and documentation for gRPC use cases
 7. Maintain full backward compatibility with existing HTTPRoute-based workflows
-8. Add gRPC well-known attributes (`grpc.service`, `grpc.method`) for improved UX in `when` clauses and rate limit counters
+8. Add gRPC well-known attributes (a `grpc` Optional binding with `service` and `method` fields) for improved UX in `when` clauses and rate limit counters
 
 ## Non-Goals
 
@@ -74,8 +74,9 @@ gRPC runs over HTTP/2, not alongside it. From Envoy's perspective, a gRPC reques
 | `request.url_path` | `/api/users/123` | `/package.Service/Method` |
 | `request.headers` | Standard headers | HTTP/2 headers + gRPC metadata |
 | `request.protocol` | `HTTP/1.1` or `HTTP/2` | `HTTP/2` |
-| `grpc.service` | - | `UserService` (from `/UserService/GetUser`) |
-| `grpc.method` | - | `GetUser` (from `/UserService/GetUser`) |
+| `grpc.hasValue()` | `false` | `true` |
+| `grpc.service` | Error (optional.none()) | `UserService` (from `/UserService/GetUser`) |
+| `grpc.method` | Error (optional.none()) | `GetUser` (from `/UserService/GetUser`) |
 
 This means:
 - **No changes needed to WASM shim for basic GRPCRoute support** - CEL predicates against HTTP attributes work for gRPC (WASM shim changes are needed only for gRPC well-known attributes - see Task 10)
@@ -374,43 +375,57 @@ An empty GRPCRouteMatch (no method, no headers) should return empty predicates, 
 
 The following well-known attributes improve UX for `when` clauses and rate limit counters:
 
-- `grpc.service` — extracted from `request.url_path` (e.g., `UserService` from `/UserService/GetUser`)
-- `grpc.method` — extracted from `request.url_path` (e.g., `GetUser` from `/UserService/GetUser`)
+- `grpc` — CEL Optional binding always present in the evaluation context; equals `optional.none()` for non-gRPC (HTTP) requests and contains gRPC request metadata for gRPC requests
+  - `grpc.service` — extracted from `request.url_path` (e.g., `UserService` from `/UserService/GetUser`)
+  - `grpc.method` — extracted from `request.url_path` (e.g., `GetUser` from `/UserService/GetUser`)
 
 **Implementation approach:**
 - WASM shim detects gRPC requests via `content-type: application/grpc` header
 - Path parsing extracts service and method components from `/Service/Method` format
-- Attributes are registered as well-known attributes alongside existing `request.*` attributes
+- `grpc` binding is implemented as a CEL Optional type
+- For gRPC requests: `grpc` contains `optional.of(metadata)` where metadata includes `service` and `method` fields
+- For non-gRPC requests: `grpc` contains `optional.none()`
 - Internal predicate generation continues using `request.url_path` to avoid coupling
 
 **Note:** These attributes are **optional** for policy authors. All existing predicates using `request.url_path` continue to work. These well-known attributes provide convenience for policy conditions like:
 ```yaml
 when:
-  - predicate: grpc.service == 'UserService'
-  - predicate: grpc.method == 'GetUser'
+  - predicate: grpc.hasValue() && grpc.service == 'UserService'
+  - predicate: grpc.hasValue() && grpc.method == 'GetUser'
 ```
 
-#### Behavior with Non-gRPC Requests
+#### CEL Optional Semantics
 
-These attributes return empty string (`""`) when:
-- Request is not gRPC (`content-type` header is not `application/grpc`)
-- Path format doesn't match `/Service/Method` pattern
+The `grpc` binding uses CEL's Optional type to provide type-safe access to gRPC metadata:
 
-**Important:** When applying policies to Gateways with mixed HTTPRoute and GRPCRoute attachments, gRPC well-known attributes will be empty for HTTP traffic. This can lead to unexpected behavior with negation logic or counters.
-
-**Best practice:** Combine gRPC attribute checks with protocol detection:
+**Checking for gRPC requests:**
 ```yaml
-# Recommended: Explicit gRPC check for Gateway-level policies
-when:
-  - predicate: request.headers['content-type'].startsWith('application/grpc')
-  - predicate: grpc.service == 'UserService'
-
-# Avoid: Could match HTTP traffic unexpectedly
-when:
-  - predicate: grpc.service != 'AdminService'  # "" != 'AdminService' is true for HTTP!
+grpc.hasValue()  # Returns true for gRPC requests, false for HTTP
 ```
 
-**For route-level policies:** If your policy targets a specific GRPCRoute (not a Gateway), you don't need the protocol check since only gRPC traffic flows through GRPCRoutes.
+**Safe attribute access:**
+```yaml
+# Correct: Check hasValue() before accessing fields
+when:
+  - predicate: grpc.hasValue() && grpc.service == 'UserService'
+
+# Also valid: Combine with boolean operators
+when:
+  - predicate: grpc.hasValue() && grpc.service == 'UserService' && grpc.method == 'GetUser'
+
+# For negation: Always check hasValue() first
+when:
+  - predicate: grpc.hasValue() && grpc.service != 'AdminService'
+```
+
+**Benefits of Optional type:**
+- **Type safety**: Accessing `grpc.service` without checking `hasValue()` is a CEL error
+- **No empty string bugs**: Cannot accidentally match HTTP traffic with negation logic
+- **Clear semantics**: `hasValue()` explicitly indicates whether the request is gRPC
+- **Consistent with CEL idioms**: Optional types are a standard CEL pattern for nullable values
+- **Fail-closed security**: Missing `grpc.hasValue()` checks cause CEL evaluation errors at request time, preventing accidental policy bypasses. Unlike empty-string approaches where negation logic (e.g., `grpc.service != 'AdminService'`) could silently match all HTTP traffic, the Optional type ensures policies fail explicitly rather than allowing unintended access.
+
+**Best practice for all policies:** Always include `grpc.hasValue()` checks even when targeting a specific GRPCRoute. While only gRPC traffic flows through GRPCRoute resources, including the check provides defensive coding and prevents errors if policies are later copied to Gateway targets or if routing behavior changes. Consistent use of `hasValue()` makes policy intent explicit and improves maintainability.
 
 ### Security Considerations
 
@@ -488,10 +503,10 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
   Add GRPCRoute support to the testsuite framework and E2E tests mirroring existing HTTPRoute test patterns. Test coverage for gRPC well-known attributes is optional but recommended.
 
 - [ ] **Task 10: wasm-shim & RFC 0002 - gRPC Well-Known Attributes** (no blockers - can be developed in parallel)
-  Implement `grpc.service` and `grpc.method` well-known attributes in the WASM shim for improved UX in policy conditions and rate limit counters. Update RFC 0002 specification with gRPC well-known attributes documentation.
+  Implement `grpc` as a CEL Optional binding containing `service` and `method` fields in the WASM shim for improved UX in policy conditions and rate limit counters. For gRPC requests, `grpc` contains `optional.of(metadata)` where metadata includes service and method; for HTTP requests, `grpc` contains `optional.none()`. Update RFC 0002 specification with gRPC well-known attributes documentation.
 
 - [ ] **Task 11: authorino - gRPC Well-Known Attributes** (no blockers - can be developed in parallel)
-  Extract `grpc.service` and `grpc.method` from gRPC requests and add to authorization JSON for use in OPA policies, CEL authorization rules, and other evaluators.
+  Extract `grpc.service` and `grpc.method` from gRPC requests and add to authorization JSON for use in OPA policies, CEL authorization rules, and other evaluators. For gRPC requests, include a `grpc` object with `service` and `method` fields. For non-gRPC requests, the `grpc` field must be absent (not present in the JSON) to align with OPA's `has()` check semantics and avoid serializing unnecessary null values.
 
 - [ ] **Task 12: kuadrant-console-plugin - GRPCRoute UI Support** (depends on Task 7)
   Add GRPCRoute support to the OpenShift Console plugin: update resource registry, add GRPCRoute to topology visualization with icon and context menu, add "Policies" tab to GRPCRoute detail pages, create GRPCRoutePoliciesPage component, update RESOURCE_POLICY_MAP to show which policies can target GRPCRoute (excluding OIDCPolicy and TokenRateLimitPolicy).
@@ -588,21 +603,29 @@ From Authorino's perspective, a gRPC request looks like an HTTP/2 POST with spec
 
 ### "What happens to gRPC well-known attributes for HTTP requests?"
 
-**They return empty string.** When `grpc.service` or `grpc.method` are used in policies applied to Gateways with mixed HTTP and gRPC traffic:
+**The `grpc` binding is an Optional with no value.** When policies are applied to Gateways with mixed HTTP and gRPC traffic:
 
-- For gRPC requests: Attributes contain the parsed service/method
-- For HTTP requests: Attributes are empty string (`""`)
+- For gRPC requests: `grpc.hasValue()` returns `true`, attributes are accessible
+- For HTTP requests: `grpc.hasValue()` returns `false`, accessing attributes is a CEL error
 
-**Watch out for negation logic:** A condition like `grpc.service != 'AdminService'` will be `true` for all HTTP traffic since `"" != 'AdminService'`.
-
-**Best practice for mixed traffic:** Explicitly check for gRPC protocol first:
+**Type safety prevents bugs:** Unlike empty string approaches, you cannot accidentally match HTTP traffic:
 ```yaml
+# This is safe - only matches gRPC traffic
 when:
-  - predicate: request.headers['content-type'].startsWith('application/grpc')
-  - predicate: grpc.service == 'UserService'
+  - predicate: grpc.hasValue() && grpc.service != 'AdminService'
+
+# This would be a CEL evaluation error on HTTP traffic (caught at request time)
+when:
+  - predicate: grpc.service != 'AdminService'  # Missing hasValue() check!
 ```
 
-**For route-level policies:** If your policy targets a specific GRPCRoute (not a Gateway), you don't need the protocol check since only gRPC traffic flows through GRPCRoutes.
+**Best practice for mixed traffic:** Always use `grpc.hasValue()` to check for gRPC requests first:
+```yaml
+when:
+  - predicate: grpc.hasValue() && grpc.service == 'UserService'
+```
+
+**For route-level policies:** If your policy targets a specific GRPCRoute (not a Gateway), you can omit the `hasValue()` check since only gRPC traffic flows through GRPCRoutes, but including it is recommended for clarity.
 
 ---
 
