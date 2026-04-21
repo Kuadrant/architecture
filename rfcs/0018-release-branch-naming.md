@@ -2,7 +2,7 @@
 
 - Feature Name: `release-branch-naming`
 - Start Date: 2026-04-20
-- RFC PR: TBD
+- RFC PR: [#170](https://github.com/Kuadrant/architecture/pull/170)
 - Issue tracking: TBD
 - Amends: [RFC 0008 — Kuadrant Release Process](0008-kuadrant-release-process.md)
 
@@ -26,6 +26,7 @@ RFC 0008 established that each component follows semantic versioning but did not
 | limitador | `release-vX.Y.Z` | `release-v1.5.0` |
 | authorino | No release branches | Tags from `main` |
 | wasm-shim | No release branches | Floating commit + tag |
+| mcp-gateway | `release-X.Y.Z` | `release-0.6.0` |
 
 This causes three problems:
 
@@ -42,7 +43,7 @@ This causes three problems:
 
 All Kuadrant repositories that produce versioned release artifacts MUST use the following branch naming convention:
 
-```
+```text
 release-X.Y
 ```
 
@@ -54,7 +55,7 @@ Branches use the bare version number (`release-1.4`), while tags retain the `v` 
 
 ## Branch lifecycle
 
-1. **Creation**: A `release-X.Y` branch is created from `main` (or from the previous release branch) when development for the `vX.Y.0` release begins or when the first release candidate is cut.
+1. **Creation**: A `release-X.Y` branch is created from `main` when the first release candidate for `vX.Y.0` is cut.
 
 2. **Minor release**: The `vX.Y.0` tag is created on this branch after CI passes.
 
@@ -68,7 +69,7 @@ Tags remain `vX.Y.Z` (unchanged from current practice). The exception is limitad
 
 ## Examples
 
-```
+```text
 main ──●──●──●──●──●──●──●──●──●──●──●──
         \                        \
          release-1.4              release-1.5
@@ -123,6 +124,7 @@ No existing branches are renamed or deleted. The migration happens naturally: wh
 | limitador | `release-vX.Y.Z` | Create `release-1.6` instead of `release-v1.6.0` | Update RELEASE.md, workflows |
 | authorino | No branches | Create `release-0.23` for next minor | Update RELEASE.md |
 | wasm-shim | No branches | Create `release-0.14` for next minor | Update RELEASE.md |
+| mcp-gateway | `release-X.Y.Z` | Create `release-0.7` instead of `release-0.7.0` | Update RELEASING.md, workflows |
 | policy-machinery | No branches | On demand only — create `release-X.Y` when a backport is needed | None until needed |
 
 ### Per-repo changes
@@ -138,8 +140,9 @@ For repos migrating from `release-vX.Y.Z` or no branches:
 During the transition period (until all repos have cut at least one minor release with the new convention), release tooling should detect branches dynamically:
 
 ```bash
-# Try new convention first, fall back to legacy patterns
-git branch -r | grep -E "origin/release-v?X\.Y($|\.)" | head -1
+# Example: find the release branch for minor version 0.13
+# Replace X.Y with actual version numbers
+git branch -r | grep -E "origin/release-v?0\.13($|\.)" | head -1
 ```
 
 This handles `release-0.13`, `release-v0.13`, and `release-v0.13.0` transparently.
@@ -149,12 +152,15 @@ This handles `release-0.13`, `release-v0.13`, and `release-v0.13.0` transparentl
 This RFC applies to all repositories listed in `kuadrant-operator/release.yaml` as dependencies, plus kuadrant-operator itself, the operand repos (authorino, limitador), and library dependencies that are pinned to specific minors per kuadrant release line.
 
 **In scope:**
-- All repos in `release.yaml`: authorino-operator, limitador-operator, dns-operator, wasm-shim, console-plugin, developer-portal-controller
+- All repos in `release.yaml`: authorino-operator, limitador-operator, dns-operator, wasm-shim, console-plugin, developer-portal-controller, mcp-gateway
 - Orchestrator: kuadrant-operator
 - Operands: authorino, limitador
 
 **On demand only:**
-- `policy-machinery` — a Go library compiled into kuadrant-operator, not a runtime component. Different kuadrant minors pin different policy-machinery minors (e.g., v0.6.x for kuadrant 1.3, v0.7.x for 1.4). Default strategy: stay on the pinned minor for patch releases. If a bug fix is needed, prefer bumping to the latest patch of the same minor. If the fix only exists in a newer minor and backporting is too costly, a minor bump is acceptable if CI passes. Create a release branch (e.g., `release-0.6`) only when a backport to an older minor is actually needed — do not create branches preemptively.
+- `policy-machinery` — a Go library compiled into kuadrant-operator, not a runtime component.
+  - **Versioning**: Different kuadrant minors pin different policy-machinery minors (e.g., v0.6.x for kuadrant 1.3, v0.7.x for 1.4).
+  - **Patch strategy**: Stay on the pinned minor by default. Prefer bumping to the latest patch of the same minor. If the fix only exists in a newer minor and backporting is too costly, a minor bump is acceptable if CI passes.
+  - **Branches**: Create a release branch (e.g., `release-0.6`) only when a backport to an older minor is actually needed. Do not create branches preemptively.
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
@@ -169,7 +175,7 @@ This RFC applies to all repositories listed in `kuadrant-operator/release.yaml` 
 
 ## Why no `v` prefix on branches
 
-Tags use `v` (`v1.4.0`) because that's the Go module convention and the semver convention for identifying a specific release. Branches identify a release *line*, not a specific release — the `v` adds no information and diverges from OpenShift (`release-4.20`) and Kubernetes (`release-1.30`). Since Kuadrant is part of the Red Hat ecosystem and ships as Red Hat Connectivity Link, aligning with OpenShift conventions reduces friction for contributors who work across both projects.
+Tags use `v` (`v1.4.0`) because that's the Go module convention and the semver convention for identifying a specific release. Branches identify a release *line*, not a specific release — the `v` adds no information and diverges from OpenShift (`release-4.20`) and Kubernetes (`release-1.30`). Aligning with these conventions reduces friction for contributors who work across projects.
 
 dns-operator already uses this convention (`release-0.16`). kuadrant-operator's earliest release branch (`release-0.9`) also used it before later branches added `v`.
 
@@ -196,7 +202,7 @@ The `release-X.Y` pattern directly matches OpenShift and Kubernetes — the two 
 [unresolved-questions]: #unresolved-questions
 
 - Should GitHub Actions release workflows be updated as part of this RFC, or tracked as follow-up issues per repo?
-- How many minor versions should be maintained simultaneously? (e.g., N-1 like OpenShift, or driven by downstream RHCL support lifecycle?)
+- How many minor versions should be maintained simultaneously? (e.g., N-1 like OpenShift)
 - Should backport automation (Kubernetes-style `/cherry-pick release-X.Y` bot that creates backport PRs) be adopted to manage the cross-repo cascade when supporting multiple minors?
 
 # Future possibilities
