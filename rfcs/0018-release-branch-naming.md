@@ -124,6 +124,7 @@ No existing branches are renamed or deleted. The migration happens naturally: wh
 | limitador | `release-vX.Y.Z` | Create `release-1.6` instead of `release-v1.6.0` | Update RELEASE.md, workflows |
 | authorino | No branches | Create `release-0.23` for next minor | Update RELEASE.md |
 | wasm-shim | No branches | Create `release-0.14` for next minor | Update RELEASE.md |
+| developer-portal-controller | `release-vX.Y` | Drop `v`: create `release-0.2` | Update RELEASE.md, workflows |
 | mcp-gateway | `release-X.Y.Z` | Create `release-0.7` instead of `release-0.7.0` | Update RELEASING.md, workflows |
 | policy-machinery | No branches | On demand only — create `release-X.Y` when a backport is needed | None until needed |
 
@@ -141,11 +142,14 @@ During the transition period (until all repos have cut at least one minor releas
 
 ```bash
 # Example: find the release branch for minor version 0.13
-# Replace X.Y with actual version numbers
-git branch -r | grep -E "origin/release-v?0\.13($|\.)" | head -1
+# Prefer new convention (release-X.Y), fall back to legacy patterns
+git branch -r | grep -E "origin/release-0\.13$" \
+  || git branch -r | grep -E "origin/release-v0\.13$" \
+  || git branch -r | grep -E "origin/release-v?0\.13\.[0-9]+$" \
+  | head -1
 ```
 
-This handles `release-0.13`, `release-v0.13`, and `release-v0.13.0` transparently.
+This prefers `release-0.13`, then tries `release-v0.13`, then `release-v0.13.0`.
 
 ## Scope
 
