@@ -152,7 +152,8 @@ This handles `release-0.13`, `release-v0.13`, and `release-v0.13.0` transparentl
 This RFC applies to all repositories listed in `kuadrant-operator/release.yaml` as dependencies, plus kuadrant-operator itself, the operand repos (authorino, limitador), and library dependencies that are pinned to specific minors per kuadrant release line.
 
 **In scope:**
-- All repos in `release.yaml`: authorino-operator, limitador-operator, dns-operator, wasm-shim, console-plugin, developer-portal-controller, mcp-gateway
+- All repos in `release.yaml`: authorino-operator, limitador-operator, dns-operator, wasm-shim, console-plugin, developer-portal-controller
+- Other releasable repos: mcp-gateway
 - Orchestrator: kuadrant-operator
 - Operands: authorino, limitador
 
