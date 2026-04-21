@@ -315,6 +315,31 @@ For gRPC requests, `request.method` will always be `POST` because that is the un
 
 **gRPC-specific well-known attributes:** The attributes `grpc.service` and `grpc.method` will be implemented as separate well-known attributes without breaking existing behavior or requiring changes to `request.method` semantics. This approach preserves protocol-accurate WKAs while providing gRPC-specific attributes for policy authors.
 
+#### Hostname Conflict Resolution Between Route Types
+
+**Decision:** HTTPRoute and GRPCRoute resources with overlapping hostnames cannot be attached to the same Gateway Listener. Gateway API implementations must reject subsequent routes during reconciliation by setting their `Accepted` condition to `False` in the route's status.
+
+**Behaviour per Gateway API specification:**
+- When routes of different types (HTTPRoute and GRPCRoute) are attached to the same Listener with matching or overlapping hostnames, the Gateway implementation enforces hostname uniqueness
+- The first route successfully attached (based on controller reconciliation order) is accepted
+- Subsequent conflicting routes receive `Accepted=False` status with a reason explaining the conflict
+- This prevents ambiguous routing where the same hostname could resolve to both HTTP and gRPC backends
+
+**Recommended practice:**
+- Use **separate hostnames** for HTTP and gRPC traffic (e.g., `api.example.com` for HTTPRoute, `grpc.example.com` for GRPCRoute)
+- This approach provides clear routing semantics and avoids rejection scenarios
+
+**Workaround for shared hostname:**
+- If the same hostname must serve both HTTP and gRPC traffic, use HTTPRoute for both types of traffic
+- HTTPRoute can match gRPC requests using path patterns (`/Service/Method`) and the `content-type: application/grpc` header
+- This loses the UX benefits of GRPCRoute's native service/method matching but allows hostname sharing
+
+**Kuadrant policy implications:**
+- Policies attached to **rejected routes** (those with `Accepted=False`) will not be enforced
+- The topology graph will include rejected routes, but their policy attachments are inactive
+- Users should monitor route status conditions to identify conflicts
+- Consider adding validation or warnings in the console plugin when detecting hostname overlaps between route types
+
 #### GRPCRouteMatch Predicate Patterns
 
 GRPCRouteMatch translates to CEL predicates using `request.url_path`:
@@ -589,6 +614,8 @@ when:
 - [GRPCRouteMatch spec](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.GRPCRouteMatch)
 - [GRPCMethodMatch spec](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.GRPCMethodMatch)
 - [Policy Attachment (GEP-713)](https://gateway-api.sigs.k8s.io/geps/gep-713/)
+- [GEP-1016: GRPCRoute Enhancement](https://gateway-api.sigs.k8s.io/geps/gep-1016/) — hostname conflict resolution between route types
+- [Gateway API Hostname Concepts](https://gateway-api.sigs.k8s.io/concepts/api-overview/#hostname-matching) — hostname matching and uniqueness requirements
 
 ### gRPC
 - [gRPC over HTTP/2 protocol spec](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)
