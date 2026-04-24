@@ -390,8 +390,8 @@ The following well-known attributes improve UX for `when` clauses and rate limit
 **Note:** These attributes are **optional** for policy authors. All existing predicates using `request.url_path` continue to work. These well-known attributes provide convenience for policy conditions like:
 ```yaml
 when:
-  - predicate: grpc.hasValue() && grpc.service == 'UserService'
-  - predicate: grpc.hasValue() && grpc.method == 'GetUser'
+  - predicate: grpc.hasValue() && grpc.value().service == 'UserService'
+  - predicate: grpc.hasValue() && grpc.value().method == 'GetUser'
 ```
 
 #### CEL Optional Semantics
@@ -405,25 +405,25 @@ grpc.hasValue()  # Returns true for gRPC requests, false for HTTP
 
 **Safe attribute access:**
 ```yaml
-# Correct: Check hasValue() before accessing fields
+# Correct: Check hasValue() before accessing fields using .value()
 when:
-  - predicate: grpc.hasValue() && grpc.service == 'UserService'
+  - predicate: grpc.hasValue() && grpc.value().service == 'UserService'
 
 # Also valid: Combine with boolean operators
 when:
-  - predicate: grpc.hasValue() && grpc.service == 'UserService' && grpc.method == 'GetUser'
+  - predicate: grpc.hasValue() && grpc.value().service == 'UserService' && grpc.value().method == 'GetUser'
 
 # For negation: Always check hasValue() first
 when:
-  - predicate: grpc.hasValue() && grpc.service != 'AdminService'
+  - predicate: grpc.hasValue() && grpc.value().service != 'AdminService'
 ```
 
 **Benefits of Optional type:**
-- **Type safety**: Accessing `grpc.service` without checking `hasValue()` is a CEL error
+- **Type safety**: Accessing `grpc.value().service` without checking `hasValue()` is a CEL error
 - **No empty string bugs**: Cannot accidentally match HTTP traffic with negation logic
 - **Clear semantics**: `hasValue()` explicitly indicates whether the request is gRPC
-- **Consistent with CEL idioms**: Optional types are a standard CEL pattern for nullable values
-- **Fail-closed security**: Missing `grpc.hasValue()` checks cause CEL evaluation errors at request time, preventing accidental policy bypasses. Unlike empty-string approaches where negation logic (e.g., `grpc.service != 'AdminService'`) could silently match all HTTP traffic, the Optional type ensures policies fail explicitly rather than allowing unintended access.
+- **Consistent with CEL idioms**: Optional types are a standard CEL pattern for nullable values ([CEL Optional Types](https://github.com/google/cel-go/blob/v0.23.2/cel/library.go#L360-L425))
+- **Fail-closed security**: Missing `grpc.hasValue()` checks cause CEL evaluation errors at request time, preventing accidental policy bypasses. Unlike empty-string approaches where negation logic (e.g., `grpc.value().service != 'AdminService'`) could silently match all HTTP traffic, the Optional type ensures policies fail explicitly rather than allowing unintended access.
 
 **Best practice for all policies:** Always include `grpc.hasValue()` checks even when targeting a specific GRPCRoute. While only gRPC traffic flows through GRPCRoute resources, including the check provides defensive coding and prevents errors if policies are later copied to Gateway targets or if routing behavior changes. Consistent use of `hasValue()` makes policy intent explicit and improves maintainability.
 
@@ -506,7 +506,7 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
   Implement `grpc` as a CEL Optional binding containing `service` and `method` fields in the WASM shim for improved UX in policy conditions and rate limit counters. For gRPC requests, `grpc` contains `optional.of(metadata)` where metadata includes service and method; for HTTP requests, `grpc` contains `optional.none()`. Update RFC 0002 specification with gRPC well-known attributes documentation.
 
 - [ ] **Task 11: authorino - gRPC Well-Known Attributes** (no blockers - can be developed in parallel)
-  Extract `grpc.service` and `grpc.method` from gRPC requests and add to authorization JSON for use in OPA policies, CEL authorization rules, and other evaluators. For gRPC requests, include a `grpc` object with `service` and `method` fields. For non-gRPC requests, the `grpc` field must be absent (not present in the JSON) to align with OPA's `has()` check semantics and avoid serializing unnecessary null values.
+  Extract `grpc.service` and `grpc.method` from gRPC requests and add to authorization JSON for use in OPA policies, CEL authorization rules, and other evaluators. For gRPC requests, include a `grpc` object with `service` and `method` fields. For non-gRPC requests, the `grpc` field must be absent (not present in the JSON) to align with OPA's undefined value semantics when checking field existence (e.g., `input.grpc.service` returns undefined for HTTP requests, allowing Rego policies to distinguish between HTTP and gRPC). Note: OPA/Rego does not have a `has()` built-in function; field presence is checked via undefined value semantics or using `object.get(input, "grpc", {})` with defaults.
 
 - [ ] **Task 12: kuadrant-console-plugin - GRPCRoute UI Support** (depends on Task 7)
   Add GRPCRoute support to the OpenShift Console plugin: update resource registry, add GRPCRoute to topology visualization with icon and context menu, add "Policies" tab to GRPCRoute detail pages, create GRPCRoutePoliciesPage component, update RESOURCE_POLICY_MAP to show which policies can target GRPCRoute (excluding OIDCPolicy and TokenRateLimitPolicy).
@@ -612,17 +612,17 @@ From Authorino's perspective, a gRPC request looks like an HTTP/2 POST with spec
 ```yaml
 # This is safe - only matches gRPC traffic
 when:
-  - predicate: grpc.hasValue() && grpc.service != 'AdminService'
+  - predicate: grpc.hasValue() && grpc.value().service != 'AdminService'
 
 # This would be a CEL evaluation error on HTTP traffic (caught at request time)
 when:
-  - predicate: grpc.service != 'AdminService'  # Missing hasValue() check!
+  - predicate: grpc.value().service != 'AdminService'  # Missing hasValue() check!
 ```
 
 **Best practice for mixed traffic:** Always use `grpc.hasValue()` to check for gRPC requests first:
 ```yaml
 when:
-  - predicate: grpc.hasValue() && grpc.service == 'UserService'
+  - predicate: grpc.hasValue() && grpc.value().service == 'UserService'
 ```
 
 **For route-level policies:** If your policy targets a specific GRPCRoute (not a Gateway), you can omit the `hasValue()` check since only gRPC traffic flows through GRPCRoutes, but including it is recommended for clarity.
@@ -650,7 +650,16 @@ when:
 
 ### CEL & Proxy-Wasm
 - [Common Expression Language (CEL) specification](https://github.com/google/cel-spec)
+- [CEL-go Optional Types Library](https://github.com/google/cel-go/blob/v0.23.2/cel/library.go#L360-L425) — `hasValue()`, `value()`, `optional.of()`, `optional.none()` documentation
+- [CEL-go Optional Type Implementation](https://github.com/google/cel-go/blob/v0.23.2/common/types/optional.go) — Go implementation of Optional wrapper type
+- [CEL-go Variable Declaration](https://github.com/google/cel-go/blob/v0.23.2/cel/decls.go#L144) — `cel.Variable()` function for declaring variables in CEL environment
+- [CEL-go Activation Context](https://github.com/google/cel-go/blob/v0.23.2/interpreter/activation.go#L22-L31) — mechanism for supplying input values to CEL programs
 - [Proxy-Wasm specification](https://github.com/proxy-wasm/spec) — WebAssembly for Proxies (ABI specification)
+
+### OPA & Authorino
+- [Authorino OPA Authorization](https://docs.kuadrant.io/latest/authorino/docs/features/#open-policy-agent-opa-rego-policies-authorizationopa) — using OPA policies in AuthPolicy
+- [OPA Policy Reference](https://www.openpolicyagent.org/docs/latest/policy-reference/#built-in-functions) — Rego built-in functions (note: `has()` is not included)
+- [OPA Understanding Undefined](https://www.openpolicyagent.org/docs/latest/policy-language/#understanding-undefined) — how Rego handles undefined values and field presence checking
 
 ### Candidate gRPC Test Images
 - [Istio echo](https://github.com/istio/istio/tree/master/pkg/test/echo) — multi-protocol server (HTTP, gRPC, TCP)
