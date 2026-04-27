@@ -380,9 +380,9 @@ The following well-known attributes improve UX for `when` clauses and rate limit
   - `request.grpc.method` — extracted from `request.url_path` (e.g., `GetUser` from `/UserService/GetUser`)
 
 **Implementation approach:**
-- WASM shim detects gRPC requests via `content-type: application/grpc` header AND successful parsing of `request.url_path` as `/Service/Method`
+- WASM shim and Authorino (independently) detect gRPC requests via `content-type: application/grpc` header AND successful parsing of `request.url_path` (or path) as `/Service/Method`
 - Path parsing extracts service and method components from `/Service/Method` format
-- `request.grpc` is a map injected into the `request` CEL variable
+- `request.grpc` is a map injected into the `request` CEL variable (wasm-shim) or added to authorization JSON as `input.request.grpc` (Authorino)
 - For gRPC requests: `request.grpc` is present as a map with `service` and `method` string fields
 - For non-gRPC requests OR malformed gRPC paths: `request.grpc` is absent (key does not exist in the request map)
 - Internal predicate generation continues using `request.url_path` to avoid coupling
