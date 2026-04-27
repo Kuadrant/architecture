@@ -380,7 +380,7 @@ The following well-known attributes improve UX for `when` clauses and rate limit
   - `request.grpc.method` — extracted from `request.url_path` (e.g., `GetUser` from `/UserService/GetUser`)
 
 **Implementation approach:**
-- WASM shim and Authorino (independently) detect gRPC requests via `content-type: application/grpc` header AND successful parsing of `request.url_path` (or path) as `/Service/Method`
+- WASM shim and Authorino (independently) detect gRPC requests via Content-Type header starting with `application/grpc` (prefix match per gRPC over HTTP/2 spec, allowing variants like `application/grpc+proto`, `application/grpc+json`, and parameters) AND successful parsing of `request.url_path` (or path) as `/Service/Method`
 - Path parsing extracts service and method components from `/Service/Method` format
 - `request.grpc` is a map injected into the `request` CEL variable (wasm-shim) or added to authorization JSON as `input.request.grpc` (Authorino)
 - For gRPC requests: `request.grpc` is present as a map with `service` and `method` string fields
@@ -434,7 +434,7 @@ when:
 - **Fail-closed security**: Missing `has(request.grpc)` checks cause CEL evaluation errors at request time, preventing accidental policy bypasses. The absent key ensures policies fail explicitly rather than allowing unintended access.
 - **Consistent with other attributes**: Follows the same namespacing pattern as `request.headers`, `request.path`, etc.
 
-**Best practice for all policies:** Always include `has(request.grpc)` checks even when targeting a specific GRPCRoute. While only gRPC traffic flows through GRPCRoute resources, including the check provides defensive coding and prevents errors if policies are later copied to Gateway targets or if routing behavior changes. Consistent use of `has()` makes policy intent explicit and improves maintainability.
+**Best practice for all policies:** Including `has(request.grpc)` checks is recommended everywhere for defensive coding and clarity. While the check is technically optional when a policy strictly targets a GRPCRoute (since only gRPC traffic flows through GRPCRoute resources), including it prevents errors if policies are later copied to Gateway targets or if routing behavior changes. Consistent use of `has(request.grpc)` makes policy intent explicit and improves maintainability.
 
 ### Security Considerations
 
@@ -606,9 +606,11 @@ Note that `request.method` will always be `POST` for gRPC requests, as gRPC uses
 
 ### "Do Authorino and Limitador need changes for gRPC?"
 
-**No changes required.** These components receive generated artifacts (AuthConfig CRDs, limit definitions) that are protocol-agnostic. The WASM filter evaluates CEL predicates against HTTP/2 attributes, which works identically for gRPC because gRPC runs over HTTP/2.
+**For basic GRPCRoute support: No changes required.** These components receive generated artifacts (AuthConfig CRDs, limit definitions) that are protocol-agnostic. The WASM filter evaluates CEL predicates against HTTP/2 attributes, which works identically for gRPC because gRPC runs over HTTP/2.
 
-From Authorino's perspective, a gRPC request looks like an HTTP/2 POST with specific path and header patterns. From Limitador's perspective, rate limit descriptors are built from CEL expressions regardless of the underlying protocol. Both components process gRPC traffic correctly without any code changes.
+From Authorino's perspective, a gRPC request looks like an HTTP/2 POST with specific path and header patterns. From Limitador's perspective, rate limit descriptors are built from CEL expressions regardless of the underlying protocol. Both components process gRPC traffic correctly without any code changes for basic GRPCRoute support.
+
+**For gRPC well-known attributes: Authorino requires changes.** Task 11 adds `request.grpc.service` and `request.grpc.method` extraction to Authorino's authorization JSON (`input.request.grpc`). This enables policy authors to write more readable authorization rules in OPA, CEL, and other evaluators. Without these changes, policies must use `input.request.path` parsing. These well-known attributes are optional UX improvements, not required for basic GRPCRoute functionality.
 
 ### "What happens to gRPC well-known attributes for HTTP requests?"
 
@@ -634,7 +636,7 @@ when:
   - predicate: has(request.grpc) && request.grpc.service == 'UserService'
 ```
 
-**For route-level policies:** If your policy targets a specific GRPCRoute (not a Gateway), you can omit the `has()` check since only gRPC traffic flows through GRPCRoutes, but including it is recommended for clarity.
+**For route-level policies:** When a policy targets a specific GRPCRoute (not a Gateway), the `has(request.grpc)` check is technically optional since only gRPC traffic flows through GRPCRoute resources. However, including the check is recommended everywhere for defensive coding and clarity, as it makes policy intent explicit and prevents errors if policies are later reused.
 
 ---
 
