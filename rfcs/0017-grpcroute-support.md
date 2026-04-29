@@ -1,7 +1,7 @@
 # Feature: GRPCRoute Support for Kuadrant Policies
 
 - Feature Name: `grpcroute-support`
-- Status: **Draft**
+- Status: **Implementable**
 - Start Date: 2026-03-13
 - Issue tracking: [Kuadrant/architecture#156](https://github.com/Kuadrant/architecture/issues/156)
 
