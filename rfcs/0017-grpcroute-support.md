@@ -496,18 +496,6 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
 
 ### Todo
 
-- [ ] **Task 5: kuadrant-operator - RateLimitPolicy Support** (depends on Task 4)
-  Enable RateLimitPolicy to target GRPCRoute including ratelimit cluster reconcilers and integration tests with real gRPC traffic. Update RateLimitPolicy CRD XValidation to accept GRPCRoute targetRef.
-
-- [ ] **Task 6: kuadrant-operator - Extension Policies Support** (depends on Task 4)
-  Enable PlanPolicy to target GRPCRoute with integration tests. Update PlanPolicy CRD XValidation to accept GRPCRoute targetRef. Add ClusterRole permissions for grpcroutes in PlanPolicy's RBAC.
-
-- [ ] **Task 7: kuadrant-operator - GRPCRoute Policy Discoverability Reconciler** (depends on Tasks 5, 6)
-  Create GRPCRoutePolicyDiscoverabilityReconciler to add status conditions to GRPCRoutes showing which policies affect them.
-
-- [ ] **Task 8: kuadrant-operator - Examples & Documentation** (depends on Tasks 2, 7, optionally 10)
-  Create example manifests and user guide documentation for gRPC with all supported policies, including grpcurl verification commands. Examples should demonstrate both `request.url_path` patterns and gRPC well-known attributes (if Task 10 is complete).
-
 - [ ] **Task 9: testsuite - GRPCRoute E2E Test Coverage** (depends on Tasks 2, 7, optionally 10)
   Add GRPCRoute support to the testsuite framework and E2E tests mirroring existing HTTPRoute test patterns. Test coverage for gRPC well-known attributes is optional but recommended.
 
@@ -533,6 +521,18 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
 
 - [x] **Task 4: kuadrant-operator - AuthPolicy Support + Data Plane Wiring** — [Kuadrant/kuadrant-operator#1821](https://github.com/Kuadrant/kuadrant-operator/issues/1821)
   Enable AuthPolicy to target GRPCRoute with full end-to-end functionality including predicate generation, gateway provider reconcilers (WasmPlugin, auth cluster configs), and integration tests with real gRPC traffic. Update AuthPolicy CRD XValidation to accept GRPCRoute targetRef.
+
+- [x] **Task 5: kuadrant-operator - RateLimitPolicy Support** — [Kuadrant/kuadrant-operator#1824](https://github.com/Kuadrant/kuadrant-operator/issues/1824)
+  Enable RateLimitPolicy to target GRPCRoute including ratelimit cluster reconcilers and integration tests with real gRPC traffic. Update RateLimitPolicy CRD XValidation to accept GRPCRoute targetRef.
+
+- [x] **Task 6: kuadrant-operator - Extension Policies Support** — [Kuadrant/kuadrant-operator#1825](https://github.com/Kuadrant/kuadrant-operator/issues/1825)
+  Enable PlanPolicy to target GRPCRoute with integration tests. Update PlanPolicy CRD XValidation to accept GRPCRoute targetRef. Add ClusterRole permissions for grpcroutes in PlanPolicy's RBAC.
+
+- [x] **Task 7: kuadrant-operator - GRPCRoute Policy Discoverability Reconciler** — [Kuadrant/kuadrant-operator#1826](https://github.com/Kuadrant/kuadrant-operator/issues/1826)
+  Create GRPCRoutePolicyDiscoverabilityReconciler to add status conditions to GRPCRoutes showing which policies affect them.
+
+- [x] **Task 8: kuadrant-operator - Examples & Documentation** — [Kuadrant/kuadrant-operator#1827](https://github.com/Kuadrant/kuadrant-operator/issues/1827)
+  Create example manifests and user guide documentation for gRPC with all supported policies, including grpcurl verification commands. Examples should demonstrate both `request.url_path` patterns and gRPC well-known attributes (if Task 10 is complete).
 
 ---
 
