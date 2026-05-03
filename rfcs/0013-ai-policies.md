@@ -180,9 +180,6 @@ actions:
   scope: ratelimit-scope-a
   data:
     - expression:
-        key: model
-        value: requestBodyJSON('model')
-    - expression:
         key: limit.low_limit__346b5e73
         value: "1"
     - expression:
@@ -193,8 +190,8 @@ actions:
         value: responseBodyJSON('usage.total_tokens')
 ```
 
-When a prompt request for model `gpt-4.1`, whose response generates `35` tokens, reaches the WASM module with the configuration above,
-it will result in the following [ShouldRateLimit gRPC](https://www.envoyproxy.io/docs/envoy/latest/api-v3/service/ratelimit/v3/rls.proto) call:
+When a prompt request, whose response generates `35` tokens, reaches the WASM module with the configuration above,
+it will result in the following [Report gRPC](https://github.com/Kuadrant/limitador/blob/server-v2.1.0/limitador-server/proto/kuadrantrls.proto) call:
 
 ```json
 {
@@ -202,7 +199,6 @@ it will result in the following [ShouldRateLimit gRPC](https://www.envoyproxy.io
   "descriptors": [
       {
            "entries": [
-               {"key": "model", "value": "gpt-4.1"},
                {"key": "limit.low_limit__346b5e73", "value": "1"}
            ]
       }
@@ -211,15 +207,11 @@ it will result in the following [ShouldRateLimit gRPC](https://www.envoyproxy.io
 }
 ```
 
-- Implement the rate-limiting logic during the processing of the **downstream** request body, as it must be parsed to determine which model is being targeted.
-  - Initial descriptors would include the request path, user id (if available) and the requested model.
 - Implement the rate-limiting logic during the processing of the **upstream** response body, as it must be parsed to determine the counter increment based on usage metrics.
 - Look at ways to avoid 2 requests to limitador per single request to a model. This is not ideal to have a limit check and counter increment happen separately due to scaling concerns. However, this approach is sufficient for an initial implementation.
 - A new action type is not being considered. The WASM module will only initiate a ShouldRateLimit gRPC call to Limitador when all associated CEL expressions (namely `predicates` and `data`) can be evaluated.
 - The order of actions is important and will be enforced:
-  - If any CEL expression references the `requestBodyJSON()` CEL function, the gRPC request will be triggered after the **downstream** request body has been parsed.
   - If any CEL expression references the `responseBodyJSON()` CEL function, the gRPC request will be triggered after the **upstream** response body has been parsed.
-  - If one action requires evaluation of the `requestBodyJSON()` and a subsequent action can be performed during the request headers phase, both actions will be executed during the request body phase.
   - If one action requires evaluation of the `responseBodyJSON()` and a subsequent action can be performed during any of the previous request phases, both actions will be executed during the response body phase.
   - Usage metrics are flushed as part of the body of LLM responses (either complete responses, or when streamed). Some additional notes on our existing filters, including our "internal to WASM" http filter chain, in this thread: https://kubernetes.slack.com/archives/C05J0D0V525/p1744098001098719. A flow diagram below attempts to capture this flow at a high level.
 
@@ -252,7 +244,6 @@ sequenceDiagram
   end
 
   %% pre-model-server token rate limiting check
-  GW->>GW: Parse model from request body
   GW->>L: CheckRateLimit (read only op)
   alt Limit not reached
     L-->>GW: Rate limit OK
