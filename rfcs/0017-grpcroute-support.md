@@ -638,6 +638,62 @@ when:
 
 **For route-level policies:** When a policy targets a specific GRPCRoute (not a Gateway), the `has(request.grpc)` check is technically optional since only gRPC traffic flows through GRPCRoute resources. However, including the check is recommended everywhere for defensive coding and clarity, as it makes policy intent explicit and prevents errors if policies are later reused.
 
+### "How do gRPC clients handle HTTP errors from policies?"
+
+**Envoy automatically translates HTTP status codes to gRPC status codes** for gRPC requests. All Kuadrant traffic flows through Envoy, which detects gRPC requests (via `content-type: application/grpc*`) and applies the [official gRPC HTTP-to-gRPC status mapping](https://github.com/grpc/grpc/blob/master/doc/http-grpc-status-mapping.md) when sending responses.
+
+When the WASM shim returns HTTP status codes (401, 403, 429) to Envoy for policy rejections, Envoy translates these to appropriate `grpc-status` trailer values before forwarding to the client.
+
+**Key mappings:**
+
+| HTTP Status | gRPC Status Code | Policy Example |
+|-------------|------------------|----------------|
+| 401 Unauthorized | `UNAUTHENTICATED` (16) | AuthPolicy authentication failure |
+| 403 Forbidden | `PERMISSION_DENIED` (7) | AuthPolicy authorization denial |
+| 429 Too Many Requests | `UNAVAILABLE` (14) | RateLimitPolicy rate limit exceeded |
+
+**Note:** While `RESOURCE_EXHAUSTED` (8) would be semantically more appropriate for rate limiting, the standard HTTP-to-gRPC mapping uses `UNAVAILABLE` for HTTP 429.
+
+**AuthPolicy rejection example:**
+
+When Authorino rejects a request due to missing or invalid credentials:
+
+```
+# WASM shim returns HTTP 401 → Envoy translates to gRPC status
+HTTP/2 200 OK
+grpc-status: 16
+grpc-message: 
+
+# gRPC client receives
+ERROR:
+  Code: Unauthenticated
+  Message: 
+```
+
+**Note:** Currently the auth denial message is empty because Authorino returns an empty response body. This could be improved by having the WASM shim provide default messages for common auth failure scenarios.
+
+**RateLimitPolicy rejection example:**
+
+When Limitador rate limits a request:
+
+```
+# WASM shim returns HTTP 429 → Envoy translates to gRPC status
+HTTP/2 200 OK
+grpc-status: 14
+grpc-message: Too Many Requests
+
+# gRPC client receives
+ERROR:
+  Code: Unavailable
+  Message: Too Many Requests
+```
+
+**Important notes:**
+- Translation happens in Envoy, which detects gRPC requests and sets the `grpc-status` trailer based on the HTTP status code returned by the WASM shim
+- If Envoy weren't intercepting the requests, gRPC client libraries would perform the same translation using the standard mapping when receiving raw HTTP status codes
+- gRPC always uses HTTP/2 200 as the transport status; the actual RPC status is in the `grpc-status` trailer
+- Standard HTTP error codes from Kuadrant policies work correctly for gRPC traffic without special handling
+
 ---
 
 ## References
@@ -651,8 +707,10 @@ when:
 - [GEP-1016: GRPCRoute Enhancement](https://gateway-api.sigs.k8s.io/geps/gep-1016/) — hostname conflict resolution between route types
 - [Gateway API Hostname Concepts](https://gateway-api.sigs.k8s.io/concepts/api-overview/#hostname-matching) — hostname matching and uniqueness requirements
 
-### gRPC
+### gRPC & Envoy
 - [gRPC over HTTP/2 protocol spec](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md)
+- [gRPC HTTP status to gRPC status mapping](https://github.com/grpc/grpc/blob/master/doc/http-grpc-status-mapping.md) — official mapping used by Envoy and gRPC clients
+- [Envoy gRPC architecture overview](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_protocols/grpc) — how Envoy handles gRPC protocol translation
 
 ### Kuadrant
 - [Well-Known Attributes (RFC 0002)](https://github.com/Kuadrant/architecture/blob/main/rfcs/0002-well-known-attributes.md)
