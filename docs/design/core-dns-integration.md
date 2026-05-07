@@ -34,6 +34,7 @@ This model enables workloads across multiple clusters to contribute DNS endpoint
 
 Rather than requiring CoreDNS to watch all DNSRecords in the cluster, the integration uses a label-based filtering mechanism. The DNS Operator applies a zone-specific label (`kuadrant.io/coredns-zone-name`) to DNSRecords when they are reconciled. The CoreDNS plugin watches only for DNSRecords with labels matching its configured zones, reducing resource overhead and providing clear zone boundaries.
 
+As is the case now, each cluster will also have Kuadrant running and so an instance of DNS Operator installed. It will be the responsibility of the DNS Operator to build a "merged" DNSRecord based on the response for the `kdrnt` tld from each Core DNS acting as an authoritative nameserver for a given host ultimately specified via a gateway listener host. 
 ### GEO and Weighted Routing
 
 The CoreDNS Kuadrant plugin implements GEO and weighted routing using the same algorithmic approach as cloud providers:
@@ -74,6 +75,7 @@ A single Kubernetes cluster runs both DNS Operator and CoreDNS. Users create DNS
 
 Two primary clusters run CoreDNS and reconcile delegating DNSRecords from all three clusters. Each primary cluster independently serves the complete authoritative record set. The secondary cluster creates delegating DNSRecords but does not run CoreDNS.
 
+1) A DNSRecord with the endpoints to bring traffic to the local gateway. This DNSRecord is the "gateway local" copy and the DNSOperator will set this up with a root domain that matches the original DNSRecord but append the `kdrnt` TLD. In addition this record will have no weighting or geo provider specific meta-data. Instead these will be represented as TXT records. This is so they can be queried via a DNS query and used to form a complete DNS response for the original host from any Core DNS instance; it is these records that other DNS Operator instances will be querying in order to build a full record set and any GEO or Weighting configuration for a given dns name.
 ```
 ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
 │ Primary Cluster 1│    │ Primary Cluster 2│    │Secondary Cluster │
@@ -96,6 +98,9 @@ Two primary clusters run CoreDNS and reconcile delegating DNSRecords from all th
 
 ### DNS Operator
 
+#### CoreDNS Kuadrant Plugin
+
+The CoreDNS Kuadrant plugin follows the [Core DNS plugin](https://coredns.io/manual/plugins/) model. It sets up watch and listers on kuadrant's DNSRecord resources in the k8s cluster and as it discovers them processes them and adds the endpoints to the appropriate DNS zone with the correct GEO and Weighted data.
 The DNS Operator is extended to support CoreDNS as a provider type (`kuadrant.io/coredns`). When reconciling DNSRecords with a CoreDNS provider:
 
 In both single-cluster and multi-cluster scenarios, the DNS Operator creates an authoritative DNSRecord with zone labels for the CoreDNS plugin to watch and serve. The key difference lies in how this authoritative record is populated:
@@ -103,6 +108,7 @@ In both single-cluster and multi-cluster scenarios, the DNS Operator creates an 
 - **Single cluster**: The authoritative DNSRecord contains endpoints from the single cluster
 - **Multi-cluster delegation**: The authoritative DNSRecord is created by reading and merging delegating DNSRecords from all connected clusters
 
+For weighted responses, the Kuadrant plugin builds a list of all the available records that could be provided as the answer to a given query from within the identified zone. It then applies a weighting algorithm to decide on a single response depending on the individual record weighting. It is effectively decided each time based on a random number between 0 and the sum of all the weights. So it is not a super predictable response but is a correctly weighted response.
 The DNS Operator distinguishes between primary and secondary roles to determine whether it should reconcile delegating records into authoritative records.
 
 ### CoreDNS Plugin
@@ -118,6 +124,7 @@ The CoreDNS plugin integrates with Kubernetes to serve DNSRecords as DNS respons
 
 Multi-cluster delegation requires primary clusters to read DNSRecords from other clusters. This is achieved through kubeconfig-based cluster interconnection secrets that grant read access to DNSRecord resources across clusters. This approach reuses Kubernetes RBAC rather than introducing a separate authentication mechanism.
 
+In order to make the "gateway local" records available to each other location without applying any weighting or geo data, each Core DNS instance also serves a zone for `kdrnt`. This zone is unique to the Kuadrant needs and is only used for look up purposes by each instance of the DNS Operator in order to build a full picture of all of the available dns endpoints for given host.
 ## Implementation References
 
 For detailed implementation guidance, configuration examples, and operational procedures, see:
