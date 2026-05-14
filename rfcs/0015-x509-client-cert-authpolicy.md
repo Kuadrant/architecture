@@ -1324,7 +1324,7 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
   - [x] Certificate not trusted by Authorino
   - [x] Gateway vs. Authorino validation failures
 - [ ] ~Write migration guide from OPA workaround to native `authentication.x509`~
-- [ ] ~Update release notes~ →
+- [ ] ~Update release notes~
 - [ ] ~Create architecture diagrams (defense in depth vs. L7-only validation)~
 - [x] Document XFCC header format and security considerations for each tier
 
