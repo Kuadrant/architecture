@@ -1298,17 +1298,17 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
 - [x] Submit PR to Kuadrant Operator repository
 
 ### Testing Development
-- [ ] Design e2e test scenarios
-- [ ] Implement certificate generation fixtures
-- [ ] Implement Gateway configuration fixtures
-- [ ] Write happy path tests
-- [ ] Write failure scenario tests (invalid certs, expired, wrong CA)
-- [ ] Write certificate subject validation tests
-- [ ] Write certificate chain tests
-- [ ] Test with Istio gateway
-- [ ] Test with Envoy Gateway (if applicable)
-- [ ] Verify performance impact
-- [ ] Submit PR to testsuite repository
+- [x] Design e2e test scenarios
+- [x] Implement certificate generation fixtures
+- [x] Implement Gateway configuration fixtures
+- [x] Write happy path tests
+- [x] Write failure scenario tests (invalid certs, expired, wrong CA)
+- [x] Write certificate subject validation tests
+- [x] Write certificate chain tests
+- [x] Test with Istio gateway
+- [x] Test with Envoy Gateway (if applicable)
+- [ ] ~Verify performance impact~
+- [x] Submit PR to testsuite repository
 
 ### Documentation
 - [x] Write user guide for X.509 authentication with all three tiers
