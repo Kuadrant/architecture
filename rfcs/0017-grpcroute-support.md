@@ -1,7 +1,7 @@
 # Feature: GRPCRoute Support for Kuadrant Policies
 
 - Feature Name: `grpcroute-support`
-- Status: **Implementable**
+- Status: **Implemented**
 - Start Date: 2026-03-13
 - Issue tracking: [Kuadrant/architecture#156](https://github.com/Kuadrant/architecture/issues/156)
 
@@ -494,20 +494,6 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
 
 ## Execution
 
-### Todo
-
-- [ ] **Task 9: testsuite - GRPCRoute E2E Test Coverage** (depends on Tasks 2, 7, optionally 10)
-  Add GRPCRoute support to the testsuite framework and E2E tests mirroring existing HTTPRoute test patterns. Test coverage for gRPC well-known attributes is optional but recommended.
-
-- [ ] **Task 10: wasm-shim & RFC 0002 - gRPC Well-Known Attributes** (no blockers - can be developed in parallel)
-  Implement `request.grpc` as a map containing `service` and `method` fields in the WASM shim for improved UX in policy conditions and rate limit counters. For gRPC requests (detected via `content-type: application/grpc` header AND successfully parsing `request.url_path` as `/Service/Method`), inject the `grpc` key into the `request` CEL variable as a map with `service` and `method` string fields. For non-gRPC requests or malformed gRPC paths, the `grpc` key must be absent from the `request` map (not defined), allowing presence checks via standard CEL `has(request.grpc)` macro. Update RFC 0002 specification with gRPC well-known attributes documentation.
-
-- [ ] **Task 11: authorino - gRPC Well-Known Attributes** (no blockers - can be developed in parallel)
-  Extract gRPC service and method components from requests and add to authorization JSON for use in OPA policies, CEL authorization rules, and other evaluators. For gRPC requests (detected via `content-type: application/grpc` header AND successfully parsing path as `/Service/Method`), include a `grpc` object in `input.request` with `service` and `method` fields. For non-gRPC requests or malformed gRPC paths, the `grpc` field must be absent (not present in the JSON) to align with OPA's undefined value semantics when checking field existence (e.g., `input.request.grpc.service` returns undefined for HTTP requests, allowing Rego policies to distinguish between HTTP and gRPC). Note: OPA/Rego does not have a `has()` built-in function; field presence is checked via undefined value semantics or using `object.get(input.request, "grpc", {})` with defaults.
-
-- [ ] **Task 12: kuadrant-console-plugin - GRPCRoute UI Support** (depends on Task 7)
-  Add GRPCRoute support to the OpenShift Console plugin: update resource registry, add GRPCRoute to topology visualization with icon and context menu, add "Policies" tab to GRPCRoute detail pages, create GRPCRoutePoliciesPage component, update RESOURCE_POLICY_MAP to show which policies can target GRPCRoute (excluding OIDCPolicy and TokenRateLimitPolicy).
-
 ### Completed
 
 - [x] **Task 1: policy-machinery - GRPCRoute Controller Wiring** — [Kuadrant/policy-machinery#65](https://github.com/Kuadrant/policy-machinery/issues/65)
@@ -533,6 +519,18 @@ The `kuadrant/testsuite` repository provides the broader E2E test coverage follo
 
 - [x] **Task 8: kuadrant-operator - Examples & Documentation** — [Kuadrant/kuadrant-operator#1827](https://github.com/Kuadrant/kuadrant-operator/issues/1827)
   Create example manifests and user guide documentation for gRPC with all supported policies, including grpcurl verification commands. Examples should demonstrate both `request.url_path` patterns and gRPC well-known attributes (if Task 10 is complete).
+
+- [x] **Task 9: testsuite - GRPCRoute E2E Test Coverage** — [Kuadrant/testsuite#886](https://github.com/Kuadrant/testsuite/issues/886)
+  Add GRPCRoute support to the testsuite framework and E2E tests mirroring existing HTTPRoute test patterns. Includes GRPCRoute class, gRPC backend, gRPC client library, test parametrization framework, parametrized smoke tests and extension policy tests, GRPCRoute-specific tests, and UI tests.
+
+- [x] **Task 10: wasm-shim & RFC 0002 - gRPC Well-Known Attributes** — [Kuadrant/wasm-shim#317](https://github.com/Kuadrant/wasm-shim/issues/317)
+  Implement `request.grpc` as a map containing `service` and `method` fields in the WASM shim for improved UX in policy conditions and rate limit counters. For gRPC requests (detected via `content-type: application/grpc` header AND successfully parsing `request.url_path` as `/Service/Method`), inject the `grpc` key into the `request` CEL variable as a map with `service` and `method` string fields. For non-gRPC requests or malformed gRPC paths, the `grpc` key is absent from the `request` map (not defined), allowing presence checks via standard CEL `has(request.grpc)` macro. RFC 0002 updated with gRPC well-known attributes documentation.
+
+- [x] **Task 11: authorino - gRPC Well-Known Attributes** — [Kuadrant/authorino#584](https://github.com/Kuadrant/authorino/issues/584)
+  Extract gRPC service and method components from requests and add to authorization JSON for use in OPA policies, CEL authorization rules, and other evaluators. For gRPC requests (detected via `content-type: application/grpc` header AND successfully parsing path as `/Service/Method`), include a `grpc` object in `input.request` with `service` and `method` fields. For non-gRPC requests or malformed gRPC paths, the `grpc` field is absent (not present in the JSON) to align with OPA's undefined value semantics when checking field existence.
+
+- [x] **Task 12: kuadrant-console-plugin - GRPCRoute UI Support** — [Kuadrant/kuadrant-console-plugin#367](https://github.com/Kuadrant/kuadrant-console-plugin/issues/367)
+  Add GRPCRoute support to the OpenShift Console plugin: update resource registry, add GRPCRoute to topology visualization with icon and context menu, add "Policies" tab to GRPCRoute detail pages, create GRPCRoutePoliciesPage component, update RESOURCE_POLICY_MAP to show which policies can target GRPCRoute (excluding OIDCPolicy and TokenRateLimitPolicy), add GRPCRoutes panel to overview page.
 
 ---
 
