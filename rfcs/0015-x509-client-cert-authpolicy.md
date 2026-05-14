@@ -1,7 +1,7 @@
 # X.509 Client Certificate Authentication in Kuadrant AuthPolicy
 
 - Feature Name: `x509-client-cert-authpolicy`
-- Status: **Implementable**
+- Status: **Implemented**
 - Start Date: 2026-03-03
 - Issue tracking: [Kuadrant/architecture#140](https://github.com/Kuadrant/architecture/issues/140)
 
@@ -1298,42 +1298,42 @@ def test_x509_authentication_expired_cert(gateway_with_client_cert_validation,
 - [x] Submit PR to Kuadrant Operator repository
 
 ### Testing Development
-- [ ] Design e2e test scenarios
-- [ ] Implement certificate generation fixtures
-- [ ] Implement Gateway configuration fixtures
-- [ ] Write happy path tests
-- [ ] Write failure scenario tests (invalid certs, expired, wrong CA)
-- [ ] Write certificate subject validation tests
-- [ ] Write certificate chain tests
-- [ ] Test with Istio gateway
-- [ ] Test with Envoy Gateway (if applicable)
-- [ ] Verify performance impact
-- [ ] Submit PR to testsuite repository
+- [x] Design e2e test scenarios
+- [x] Implement certificate generation fixtures
+- [x] Implement Gateway configuration fixtures
+- [x] Write happy path tests
+- [x] Write failure scenario tests (invalid certs, expired, wrong CA)
+- [x] Write certificate subject validation tests
+- [x] Write certificate chain tests
+- [x] Test with Istio gateway
+- [x] Test with Envoy Gateway (if applicable)
+- [ ] ~Verify performance impact~
+- [x] Submit PR to testsuite repository
 
 ### Documentation
-- [ ] Write user guide for X.509 authentication with all three tiers
-- [ ] Create step-by-step tutorials:
-  - [ ] Tier 1: Gateway API v1.5+ with `spec.tls.frontend.default.validation` (recommended)
-  - [ ] Tier 2: EnvoyFilter for older Gateway API versions (alternative)
-  - [ ] Tier 3: XFCC forwarding for exceptional cases (with security warnings)
-- [ ] Document multi-CA trust configuration using label selectors
-- [ ] Create decision tree for choosing proxy configuration tier
-- [ ] Document cert-manager integration examples (gateway CAs + Authorino CAs)
-- [ ] Document troubleshooting steps:
-  - [ ] XFCC header not populated
-  - [ ] Certificate not trusted by Authorino
-  - [ ] Gateway vs. Authorino validation failures
-- [ ] Write migration guide from OPA workaround to native `authentication.x509`
-- [ ] Update release notes
-- [ ] Create architecture diagrams (defense in depth vs. L7-only validation)
-- [ ] Document XFCC header format and security considerations for each tier
+- [x] Write user guide for X.509 authentication with all three tiers
+- [x] Create step-by-step tutorials:
+  - [x] Tier 1: Gateway API v1.5+ with `spec.tls.frontend.default.validation` (recommended)
+  - [x] Tier 2: EnvoyFilter for older Gateway API versions (alternative)
+  - [x] Tier 3: XFCC forwarding for exceptional cases (with security warnings)
+- [x] Document multi-CA trust configuration using label selectors
+- [x] Create decision tree for choosing proxy configuration tier
+- [x] Document cert-manager integration examples (gateway CAs + Authorino CAs)
+- [x] Document troubleshooting steps:
+  - [x] XFCC header not populated
+  - [x] Certificate not trusted by Authorino
+  - [x] Gateway vs. Authorino validation failures
+- [ ] ~Write migration guide from OPA workaround to native `authentication.x509`~
+- [ ] ~Update release notes~
+- [ ] ~Create architecture diagrams (defense in depth vs. L7-only validation)~
+- [x] Document XFCC header format and security considerations for each tier
 
 ### Release
 - [ ] Coordinate release versions across repos (Authorino, operators)
 - [ ] Tag releases
 - [ ] Publish release notes
 - [ ] Announce feature in community channels
-- [ ] Update official documentation site
+- [x] Update official documentation site
 
 ## Future Enhancements
 
