@@ -2,262 +2,165 @@
 
 - Feature Name: `olm_dependency_model_transition`
 - Start Date: 2026-03-30
-- RFC PR: TBD
+- RFC PR: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/pull/0000)
 - Issue tracking: [Kuadrant/architecture#164](https://github.com/Kuadrant/architecture/issues/164)
 
 # Summary
 [summary]: #summary
 
-Replace the OLMv0 dependency model (which automatically installs Authorino, Limitador, and DNS operators) with a runtime approach where the Kuadrant operator creates and manages OLMv1 ClusterExtension CRs for its dependencies. This preserves the single-action install experience while aligning with OLMv1's design, which explicitly removes automatic dependency installation.
+Replace OLMv0's automatic dependency installation with a separate umbrella operator that deploys and manages all Kuadrant components. Helm charts become the single manifest source — consumed directly via `helm install` and by the umbrella operator via client-only rendering. The kuadrant-operator is simplified to focus exclusively on policy reconciliation; operator installation and operand creation move to the umbrella operator.
+
+- OpenShift: Umbrella Operator domain
+- Kubernetes: Helm domain
+
+This follows the pattern recommended by the OLM team and used by OpenShift's [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator).
 
 # Motivation
 [motivation]: #motivation
 
-Kuadrant supports OLM based installs. The OLM (Operator Lifecycle Manager) dependency model is being deprecated as part of the transition to OLMv1 (ClusterExtensions). OLMv1 will no longer automatically install missing dependencies.
+OLMv1 (ClusterExtensions) [explicitly removes automatic dependency installation](https://github.com/operator-framework/operator-controller/blob/main/docs/project/olmv1_design_decisions.md), breaking Kuadrant's current single-action install experience.
 
-- [OLMv1 design decisions](https://github.com/operator-framework/operator-controller/blob/main/docs/project/olmv1_design_decisions.md)
-
-Today, Kuadrant ships as a single OLM catalog that bundles four operators:
-
-- **kuadrant-operator** (the main operator)
-- **authorino-operator** (authentication/authorization)
-- **limitador-operator** (rate limiting)
-- **dns-operator** (DNS management)
-
-Users add one CatalogSource, create one Subscription, and OLM's dependency resolution handles installing all four operators automatically. When the OLMv1 dependency model is removed, this single-action install experience breaks.
-
-The target timeline for this transition is **end of 2026**.
+Target timeline: **end of 2026**.
 
 ### Requirements
 
-1. **Preserve the single-action install experience** - users should not need to manually install four plus separate operators.
-2. **Kuadrant owns the full lifecycle of its dependencies** - To ensure consistency, the Kuadrant operator must manage versions, installation, upgrades, and removal of Authorino, Limitador, and DNS operators. Cluster admins do not independently upgrade these components.
-3. **Targets OLMv1** - the solution needs to work with OLMv1 (ClusterExtensions API), which can be installed on both OpenShift and vanilla Kubernetes. This does not impact on other installation methods.
-4. **Dependency operators remain Kuadrant-exclusive** - Authorino, Limitador, and DNS operators are already exclusively owned by Kuadrant. This requirement is maintained.
-5. **Potential for future selective dependency installation** - The number of dependencies is likely to grow as more policies are added and the custom policy / extension model matures. Users at some point are likely to want/need to be able to choose which dependencies to deploy based on the policies they want to use.
-6. **No independent installation of Kuadrant components** - When using OLMv1 to install Kuadrant, it is expected that there is no independent installation of Kuadrant components (e.g., Authorino) on the cluster. Users who currently install Authorino independently for standalone use would ideally transition to using Kuadrant with selective profiles (at a future point) to get just the capabilities they need (e.g., AuthPolicy only). 
-> Note: OLMv1 allows two ClusterExtensions to share the same CRD **if the CRD content is identical**, but relying on this for coexistence introduces version alignment complexity that is best avoided.
-
-7. **Roll-forward only updates** - OLMv1 does not document support for downgrading a ClusterExtension to a previous version. Updates to Kuadrant and its dependencies are roll-forward only. If an upgrade fails, the fix is to release a new version that resolves the issue, not to roll back.
-
+1. **Single-action install** — users create one ClusterExtension, not four.
+2. **Full lifecycle management** — the umbrella operator manages versions, upgrades, and removal of all components.
+3. **OLMv1 compatible** — works with the ClusterExtensions API on both OpenShift and vanilla Kubernetes.
+4. **Separation of concerns** — the umbrella operator handles deployment; kuadrant-operator handles policy reconciliation and has no OLMv1 awareness.
+5. **Helm as single manifest source** — both installation paths (direct Helm (upstream plain kubernetes) and umbrella operator (OpenShift)) consume the same charts.
+6. **Umbrella operator owns operands** — installs each dependency operator and creates their operands (Authorino, Limitador instances). The kuadrant-operator no longer performs these tasks.
+7. **Extensible** — supports future selective deployment of components based on which policies are enabled.
 
 ### OLMv1 Context
 
-With OLMv1, installing an operator requires the user to explicitly create several resources ([getting started guide](https://operator-framework.github.io/operator-controller/getting-started/olmv1_getting_started/)):
-
-1. **ClusterCatalog** — points to an image registry containing operator bundles
-2. **Namespace** — where the operator will run
-3. **ServiceAccount** — OLMv1 impersonates this SA to install bundle contents
-4. **ClusterRoles/Roles + Bindings** — grant the SA permissions for everything the operator needs to create
-5. **ClusterExtension** — the install intent, referencing the SA and catalog
-
-Without dependency management, a user installing the full Kuadrant stack would need to repeat steps 2-5 for each of the four operators (~20+ resources manually). The goal is to reduce this to a single ClusterExtension install for Kuadrant, with the operator managing the rest.
-
-### OLMv1 Design Decisions Relevant to Kuadrant
-
-Reference: [OLMv1 Design Decisions](https://github.com/operator-framework/operator-controller/blob/main/docs/project/olmv1_design_decisions.md)
-
-| Decision | Impact on Kuadrant |
-|---|---|
-| **No automatic dependency installation** | The core reason we need this work — OLMv1 won't install Authorino/Limitador/DNS for us |
-| **No cluster-admin permissions** | OLMv1 uses user-provided ServiceAccounts to install bundles. We need to provision these SAs with correct RBAC |
-| **Single extension ownership** | Each managed object is owned by exactly one ClusterExtension. Our ClusterRoles are owned by Kuadrant but *referenced* by dependency ClusterExtensions via operator-created bindings — this should be fine |
-| **Flexible bundle contents** | Bundles can contain arbitrary resources (ClusterRoles, etc.), confirming we can ship dependency installer ClusterRoles in the Kuadrant bundle |
-| **Fine-grained version control** | Admins can pin versions per operator. Our operator can set specific versions in the ClusterExtension CRs it creates |
-| **Constraint validation, not resolution** | OLMv1 will check if constraints are met but won't act on them. Reinforces that we must handle installation ourselves |
+OLMv1 requires explicit creation of several resources per operator ([getting started guide](https://operator-framework.github.io/operator-controller/getting-started/olmv1_getting_started/)): ClusterCatalog, Namespace, ServiceAccount, RBAC, and ClusterExtension. Key design decisions: no automatic dependency installation, no cluster-admin permissions (user-provided ServiceAccounts), flexible bundle contents, and per-operator version control.
 
 ### Out of Scope
 
-- Non-OLM environments (e.g., Helm installs on vanilla Kubernetes) are out of scope for this proposal. Existing Helm tooling will continue to handle dependency installation in those environments.
-
-- Implementing any selective dependency deployment at this stage.
+- Selective component deployment. The architecture supports it and has this in mind for a future iteration, but the initial implementation deploys all components.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-### User Install Workflow
+### Install
 
-1. **Create a ClusterCatalog** pointing to the Kuadrant catalog image (contains all operators).
-2. **Create the Kuadrant ClusterExtension** with its namespace, ServiceAccount, and RBAC (this is the only ClusterExtension the user creates).
-3. **Create the Kuadrant CR** — the operator detects OLMv1, creates ServiceAccounts, ClusterRoleBindings, and ClusterExtension CRs for each required dependency in the Kuadrant CR's namespace.
-4. **Dependencies are installed automatically** — OLMv1 processes the dependency ClusterExtensions using the operator-created ServiceAccounts and the pre-provisioned ClusterRoles.
-5. **Operator reports readiness** — once all dependencies are running, the Kuadrant CR status reflects a healthy state.
+1. Create a ClusterCatalog pointing to the Kuadrant catalog image.
+2. Create the umbrella operator's ClusterExtension (with namespace, ServiceAccount, RBAC). This is the only ClusterExtension the user creates.
+3. OLMv1 deploys the umbrella operator.
+4. The umbrella operator renders the Helm charts and deploys all components: CRDs, RBAC, operator Deployments, and operand instances.
+5. Create the Kuadrant CR (to configure) — kuadrant-operator begins reconciling policies.
 
-To uninstall, the user deletes the Kuadrant CR (operator cleans up dependency ClusterExtensions, ServiceAccounts, and ClusterRoleBindings) and then deletes the Kuadrant ClusterExtension.
+Uninstall: delete the Kuadrant CR , then delete the ClusterExtension.
 
-### Upgrade Experience
+### Upgrade
 
-When the user upgrades Kuadrant (by updating the version on the Kuadrant ClusterExtension), the new operator version automatically upgrades its dependencies to compatible versions. The user does not need to manually upgrade dependency operators. The Kuadrant CR status reports progress and surfaces any failures during the upgrade.
+#### Initial transition (from OLMv0 to umbrella operator)
+
+1. OLMv1 deploys the umbrella operator.
+2. The umbrella operator updates **kuadrant-operator first** — the new version stops reconciling operands, ceding that responsibility to the umbrella operator.
+3. Once kuadrant-operator is healthy, dependency operators and operands are deployed under umbrella operator management.
+
+This ordering is specific to the transition: kuadrant-operator must stop creating operands before the umbrella operator starts.
+
+#### Steady-state upgrades
+
+1. OLMv1 deploys the new umbrella operator image (containing updated charts and image references).
+2. The umbrella operator re-renders charts, detects drift, and applies changes in order:
+   - **CRDs, RBAC, ServiceAccounts** for all components first — ensures new API versions and permissions are in place before any controller tries to use them.
+   - **Dependency operators** (Authorino, Limitador, DNS) — updated and waited on until healthy.
+   - **kuadrant-operator** last — as the policy reconciler, it may depend on new CRD fields or operand capabilities introduced by the dependency updates. Updating it before dependencies would risk it referencing CRD properties that don't exist yet.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
 
-### OLMv1 Detection
+### Helm as Unified Manifest Source
 
-The operator must auto-detect whether OLMv1 is present on the cluster before attempting to manage ClusterExtension CRs. This follows the existing pattern used for other dependencies — the operator already detects CRD availability at startup (e.g., Istio, Envoy Gateway, cert-manager CRDs in `internal/controller/state_of_the_world.go`). The same or similar approach would be used to check for the `clusterextensions.olm.operatorframework.io` CRD. If OLMv1 is not installed, the dependency management reconciler is not registered and the operator falls back to the current behaviour of reporting missing dependencies via status conditions. Dependency status would still be collected and reported for v1.
+The umbrella operator renders Helm charts at runtime using Helm's Go SDK with `ClientOnly=true` and `DryRun=true` — pure template rendering with no Helm release tracking. Rendered manifests are applied via controller-runtime. Charts are embedded in the umbrella operator image at build time.
 
-### RBAC and ServiceAccount Provisioning
+This is the same pattern used by [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator), which uses Helm as a templating engine rather than a package manager.
 
-The provisioning is split between build time and runtime:
+### Helm Chart Refactoring
 
-- **Build time (bundle):** ClusterRoles defining the permissions each dependency operator needs are shipped as static resources in the Kuadrant bundle. These are cluster-scoped and namespace-independent.
-- **Runtime (operator):** ServiceAccounts, ClusterRoleBindings, and ClusterExtension CRs are created by the Kuadrant operator in the same namespace as the Kuadrant CR.
+The current kuadrant-operator chart (`charts/kuadrant-operator/`) is a monolithic kustomize-generated blob — a single `manifests.yaml` of ~14,500 lines produced by `kustomize build config/helm`. This must be refactored to support per-component rendering, ordered deployment, and operand creation.
 
-Example resources the operator would create at runtime:
+#### Current state
 
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: authorino-installer
-  namespace: kuadrant-system  # same namespace as the Kuadrant CR
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: authorino-installer-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: authorino-installer-role  # pre-provisioned in bundle
-subjects:
-- kind: ServiceAccount
-  name: authorino-installer
-  namespace: kuadrant-system
----
-apiVersion: olm.operatorframework.io/v1
-kind: ClusterExtension
-metadata:
-  name: authorino-operator
-spec:
-  namespace: kuadrant-system
-  serviceAccount:
-    name: authorino-installer
-  source:
-    sourceType: Catalog
-    catalog:
-      packageName: authorino-operator
-      version: 0.5.0
-```
+- One chart with a single `templates/manifests.yaml` containing all operators, CRDs, and RBAC
+- `Chart.yaml` declares subcharts for authorino-operator, limitador-operator, and dns-operator (pulled from `https://kuadrant.io/helm-charts/`)
+- `values.yaml` is nearly empty — no configurable values exposed
+- Dependency operator manifests pulled via kustomize remote refs (e.g., `github.com/Kuadrant/authorino-operator/config/deploy?ref=main`)
+- No operand templates — operand creation is handled by kuadrant-operator at runtime
 
-### Selective Installation via Profiles
+#### Required changes
 
-Part of the motivation for this design is to allow the potential for adding selective install as a feature. Speculatively a `spec.profiles` field on the Kuadrant CR could drive selective installation — the operator would only create ClusterExtensions for dependencies required by the selected profiles. Implementation of this is out of scope for this RFC and would be added as a follow up RFC.
+1. **Replace kustomize generation with per-component Helm templates** — the kuadrant-operator chart needs templates instead of a kustomize dump. One template per component (containing its Deployment, Service, RBAC, ServiceAccount). CRDs are the exception: they must be separated (via Helm's `crds/` directory or a dedicated template) since operand CRs cannot be applied before their CRD is established.
+2. **Configurable values.yaml** — image references, namespaces, replica counts, and resource limits exposed as values. The umbrella operator injects version-pinned values at render time; direct Helm users override via `--set` or values files.
+3. **Operand templates** — the chart includes templates for operand CRs (Authorino, Limitador instances). These are created at install time on both paths, replacing the current runtime creation by kuadrant-operator.
+4. **Dependency operator subcharts** — these already exist in their respective repos. The parent chart's `Chart.yaml` dependencies remain.
+5. **Ordered rendering support** — the umbrella operator renders and applies subcharts sequentially: CRDs first, then dependency operators, then kuadrant-operator.
 
-### Upgrade Flow
+### Kuadrant CR Scope Change
 
-When Kuadrant itself is upgraded (via its own ClusterExtension), the new version of the operator may require updated versions of its dependencies. The upgrade flow would be:
+Today the Kuadrant CR serves two purposes: its existence triggers operand creation (Authorino, Limitador instances), and its spec configures runtime behaviour. With this proposal, these concerns are separated:
 
-1. **Kuadrant's ClusterExtension is upgraded** — OLMv1 deploys the new Kuadrant operator image. The new operator contains the updated dependency version mappings (e.g., Authorino 0.5.0 → 0.6.0).
-2. **Operator reconciles the Kuadrant CR** — detects that the dependency ClusterExtension CRs specify outdated versions.
-3. **Operator updates dependency ClusterExtension CRs** — patches the `spec.source.catalog.version` field on each dependency ClusterExtension to the required version.
-4. **OLMv1 processes the updated ClusterExtensions** — upgrades each dependency operator using its pre-provisioned ServiceAccount and RBAC.
-5. **Operator reports status** — once dependencies are running at the expected versions, the Kuadrant CR status reflects readiness.
+- **Operand creation** moves out of kuadrant-operator. On both install paths, operands are created at install time — by the umbrella operator (OLMv1) or by the Helm chart directly (`helm install`). The Kuadrant CR is no longer the install trigger.
+- **Runtime configuration** stays with the Kuadrant CR. 
 
-### Upgrade Ordering
+The Kuadrant CRD is deployed by the umbrella operator (as part of the Helm chart), but kuadrant-operator remains the controller that reconciles Kuadrant CRs. 
 
-Dependencies must be upgraded before the Kuadrant operator relies on any new dependency features. Since the Kuadrant operator drives the upgrade by updating the ClusterExtension CRs, it can enforce ordering:
-
-- Update dependency ClusterExtension CRs first
-- Wait for each dependency ClusterExtension to report a healthy/installed status
-- Only then proceed with its own reconciliation that depends on new dependency features
-
-The new Kuadrant operator **must** be backwards-compatible with the previous dependency versions. There is an unavoidable window between the Kuadrant operator starting (step 1) and dependencies finishing their upgrade (step 4) where the old dependency versions are still running. If the operator is not backwards-compatible with the old versions during this window, it will fail. This backwards-compatibility requirement should be enforced as part of the release process and testing.
-
-### Failure Scenarios
-
-- **Dependency upgrade fails** — the ClusterExtension for a dependency reports a failed state. The Kuadrant operator should surface this in the Kuadrant CR status conditions and not proceed with reconciliation that depends on the failed component.
+No breaking API change is required — the Kuadrant CR spec remains the same. The behavioural change is that operands exist before the Kuadrant CR is created, rather than being created in response to it. This applies to both install paths: the Helm chart includes operand CR templates, so `helm install` and the umbrella operator produce the same result. The kuadrant-operator no longer needs operand creation logic in either case.
 
 ### Version Pinning
 
-Each Kuadrant operator release would embed a compatibility matrix mapping its own version to the required dependency versions. This could be a build-time constant or configuration baked into the operator image, ensuring that a given Kuadrant version always deploys a known-good set of dependencies.
+Each umbrella operator release pins component versions via Helm values embedded at build time. Image references for all operators and operands are set through the charts' `values.yaml`, ensuring a single mechanism for version control across both install paths.
 
-### Security: RBAC Escalation Prevention
+### RBAC
 
-Kubernetes prevents a ServiceAccount from creating ClusterRoleBindings that reference ClusterRoles with broader permissions than the SA itself holds, unless the SA has the `bind` verb on those specific ClusterRoles.
+The umbrella operator's ServiceAccount requires broad permissions. These are granted via the ClusterExtension's ServiceAccount. Each component operator's RBAC is part of its rendered chart.
 
-The Kuadrant operator creates ServiceAccounts and ClusterRoleBindings at runtime for each dependency. The ClusterRoles themselves are pre-provisioned as static resources in the Kuadrant bundle at build time with known, fixed names. This allows the Kuadrant operator's own RBAC to be scoped narrowly using `resourceNames`:
+### Failure Scenarios
 
-```yaml
-- apiGroups: [rbac.authorization.k8s.io]
-  resources: [clusterroles]
-  verbs: [bind]
-  resourceNames:
-  - authorino-installer-role
-  - limitador-installer-role
-  - dns-installer-role
-```
-
-This means the Kuadrant operator:
-- **Can** bind ServiceAccounts to the pre-defined dependency installer ClusterRoles
-- **Cannot** bind arbitrary ClusterRoles or escalate beyond the known dependency roles
-- **Does not** need the actual permissions of the dependency operators on its own ServiceAccount
+- **Deployment rollout failure** — reports degraded status and blocks further upgrades (e.g., kuadrant-operator is not upgraded if a dependency failed).
+- **Image pull failure** — surfaced via the Deployment's ImagePullBackOff condition.
+- **CRD conflict** — if a CRD already exists (e.g., standalone Authorino), reports an error rather than silently overwriting.
+- **Rollback** — reverting the ClusterExtension to the previous version reconciles all Deployments back to prior image references.
 
 # Drawbacks
 [drawbacks]: #drawbacks
 
-- Adds runtime complexity to the Kuadrant operator — a new reconciler for ClusterExtension lifecycle management, with associated failure modes around catalog availability and upgrade orchestration.
-- The Kuadrant operator takes on responsibility for managing OLMv1-specific resources, coupling it more tightly to the OLM ecosystem.
-- Requires the Kuadrant operator's ServiceAccount to have `bind` permissions on dependency ClusterRoles, which is a sensitive (though narrowly scoped) privilege.
+- **New operator to maintain** — new codebase, image, build pipeline, and release process.
+- **Broad RBAC** — creating CRDs, ClusterRoles, and Deployments across namespaces is inherent to the pattern but is a wide permission set.
+- **Version coordination** — all operators must be released and tested together; compatibility matrix must be maintained.
+- **Two operators to debug** — users must distinguish umbrella operator problems (deployment) from kuadrant-operator problems (policy reconciliation).
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
 
 ### Why this design
 
-- Aligns with OLMv1's model where each operator is a separate ClusterExtension
-- Preserves the single-action install experience that users have today
-- Supports selective dependency installation as the number of dependencies grows
-- The Kuadrant operator already has the pattern for CRD detection and conditional reconciler registration, making this a natural extension
-- RBAC is narrowly scoped using pre-provisioned ClusterRoles with `bind` by `resourceNames`
+- **Separation of concerns** — kuadrant-operator is simplified; deployment orchestration is cleanly separated.
+- **No runtime OLMv1 dependency** — manages Deployments directly, reducing blast radius of OLMv1 issues.
+- **Helm reuse** — existing charts from dependency operator repos are consumed as-is. No manifest duplication. Helm becomes more of a first class citizen
+- **Proven pattern** — cluster-olm-operator uses Helm client-only rendering at scale in production.
 
 ### Alternatives considered
 
-**Embedding dependency operator deployments in the Kuadrant bundle** — all four operator Deployments (and their CRDs) would be bundled into a single OLMv1 bundle. One ClusterExtension installs everything.
-
-Pros:
-- Single ClusterExtension on the cluster — no additional ClusterExtensions created at runtime
-- No additional RBAC beyond what the operators already need
-- No dependency on external catalogs for dependency operator images
-- All components are versioned and tested together as a single unit
-
-Cons:
-- Larger bundle size
-- Tighter coupling between Kuadrant and its dependency operators at build time
-- More complex build pipeline — must pull in and package multiple operator binaries/images
-- Upgrading a single dependency requires rebuilding and releasing the entire bundle
-- May conflict with OLMv1's ownership model if dependency CRDs are also published independently
-- All-or-nothing — cannot support selective dependency installation as the number of policies and dependencies grows
-- No operator-level visibility into individual dependency failures — if an embedded dependency deployment fails, the Kuadrant operator has no ability to detect, report on, or recover from the failure since OLMv1 manages all deployments as a single unit
-
-**Reason not chosen:** The selective dependency installation requirement rules out this approach. As the number of Kuadrant policies and dependencies grows, users need the ability to install only what they need. This approach bundles everything together with no way to opt out of individual components.
-
-**Embedding ClusterExtension CRs in the Kuadrant bundle** — OLMv1's ownership model requires each managed object to be owned by exactly one extension. Nested ClusterExtension installation is not a supported pattern, and the ServiceAccount scoping would require cluster-admin level privileges.
-
-**Embedding Subscription CRs in the bundle** — Subscriptions are an OLMv0 concept that does not exist in OLMv1. In OLMv0, Subscriptions are not a supported bundle resource type. This approach has no path forward.
-
-### Impact of not doing this
-
-Without this change, Kuadrant users on OLMv1 would need to manually create ~20+ resources to install the full stack. This significantly degrades the install experience and increases the barrier to adoption.
-
-# Prior art
-[prior-art]: #prior-art
-
-- **OLMv0 dependency resolution** — the current model being replaced. OLMv0 resolves dependencies automatically via CRD-based dependency declarations in `bundle/metadata/dependencies.yaml`. This worked well but is being removed in OLMv1. [OLM Dependency Resolution](https://olm.operatorframework.io/docs/concepts/olm-architecture/dependency-resolution/)
-- **ArgoCD OLMv1 sample** — the [operator-controller ArgoCD sample](https://github.com/operator-framework/operator-controller/blob/main/config/samples/olm_v1_clusterextension.yaml) demonstrates the full set of resources required to install an operator via OLMv1, including ServiceAccount, RBAC, and ClusterExtension.
-
-# Unresolved questions
-[unresolved-questions]: #unresolved-questions
-
-- If a cluster already has an independent Authorino installation, what is the migration path for users transitioning to Kuadrant-managed Authorino?
-
-- if a cluster already has OLMv0 installed Kuadrant what is the path to move to OLMv1
-
-- OLMv1 appears to be roll-forward only (no documented downgrade support). This is captured as a requirement, but needs verification against the final OLMv1 GA documentation.
+**Single OLMv1 bundle containing all operators** — all-or-nothing; cannot support selective deployment as Kuadrant grows. Doesn't put helm front and centre
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-- **Selective profiles** — once the profiles mechanism is implemented, it could be extended to cover Kuadrant extensions (OIDCPolicy, PlanPolicy, TelemetryPolicy) as they mature, allowing users to opt in to specific extension operators.
-- **Health monitoring** — the dependency management reconciler could provide richer health monitoring by watching ClusterExtension status conditions and surfacing detailed diagnostics in the Kuadrant CR status.
-- **Cross-cluster dependency management** — in multi-cluster scenarios, the dependency management pattern could be extended to ensure consistent dependency versions across clusters.
+- **Selective component deployment** — a CR API (e.g., `KuadrantInstall`) mapping enabled policies to required components. Safety checks prevent removing components with active policy CRs.
+
+# Prior art
+[prior-art]: #prior-art
+
+- **[cluster-olm-operator](https://github.com/openshift/cluster-olm-operator)** — primary reference. Manages OLMv1 sub-components using Helm charts rendered client-only, with static resource controllers and deployment controllers for applying the rendered manifests.
+- **[OLMv0 dependency resolution](https://olm.operatorframework.io/docs/concepts/olm-architecture/dependency-resolution/)** — the current model being replaced. Resolves dependencies automatically via CRD-based declarations.
+
+# Unresolved questions
+[unresolved-questions]: #unresolved-questions
+
+- **CRD ownership conflicts** — migration path for users with standalone installations (e.g., standalone Authorino) transitioning to the umbrella operator.
+- **Installation status reporting** — today, installation status (component health, readiness) is written to the Kuadrant CR's status. With operand creation moving out of kuadrant-operator, where should installation status live?
