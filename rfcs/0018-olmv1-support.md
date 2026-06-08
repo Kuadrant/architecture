@@ -2,8 +2,8 @@
 
 - Feature Name: `olm_dependency_model_transition`
 - Start Date: 2026-03-30
-- RFC PR: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/pull/0000)
-- Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
+- RFC PR: TBD
+- Issue tracking: [Kuadrant/architecture#164](https://github.com/Kuadrant/architecture/issues/164)
 
 # Summary
 [summary]: #summary
@@ -13,7 +13,9 @@ Replace the OLMv0 dependency model (which automatically installs Authorino, Limi
 # Motivation
 [motivation]: #motivation
 
-The OLM (Operator Lifecycle Manager) dependency model is being deprecated as part of the transition to OLMv1 (ClusterExtensions). OLMv1 explicitly will not automatically install missing dependencies when a user requests an operator. The [OLMv1 design decisions](https://github.com/operator-framework/operator-controller/blob/main/docs/project/olmv1_design_decisions.md) state that it "will err on the side of predictability and cluster-administrator awareness."
+Kuadrant supports OLM based installs. The OLM (Operator Lifecycle Manager) dependency model is being deprecated as part of the transition to OLMv1 (ClusterExtensions). OLMv1 will no longer automatically install missing dependencies.
+
+- [OLMv1 design decisions](https://github.com/operator-framework/operator-controller/blob/main/docs/project/olmv1_design_decisions.md)
 
 Today, Kuadrant ships as a single OLM catalog that bundles four operators:
 
@@ -29,11 +31,14 @@ The target timeline for this transition is **end of 2026**.
 ### Requirements
 
 1. **Preserve the single-action install experience** - users should not need to manually install four plus separate operators.
-2. **Kuadrant owns the full lifecycle of its dependencies** - the Kuadrant operator manages versions, installation, upgrades, and removal of Authorino, Limitador, and DNS operators. Cluster admins do not independently upgrade these components.
-3. **Targets OLMv1** - the solution needs to work with OLMv1 (ClusterExtensions API), which can be installed on both OpenShift and vanilla Kubernetes.
+2. **Kuadrant owns the full lifecycle of its dependencies** - To ensure consistency, the Kuadrant operator must manage versions, installation, upgrades, and removal of Authorino, Limitador, and DNS operators. Cluster admins do not independently upgrade these components.
+3. **Targets OLMv1** - the solution needs to work with OLMv1 (ClusterExtensions API), which can be installed on both OpenShift and vanilla Kubernetes. This does not impact on other installation methods.
 4. **Dependency operators remain Kuadrant-exclusive** - Authorino, Limitador, and DNS operators are already exclusively owned by Kuadrant. This requirement is maintained.
-5. **Allows for selective dependency installation** - The number of dependencies is likely to grow as more policies are added and the extension model matures. Users at some point are likely to want/need to be able to choose which dependencies to deploy based on the policies they want to use.
-6. **No independent installation of Kuadrant components** - When using OLMv1 to install Kuadrant, it is expected that there is no independent installation of Kuadrant components (e.g., Authorino) on the cluster. Users who currently install Authorino independently for standalone use should transition to using Kuadrant with selective profiles to get just the capabilities they need (e.g., AuthPolicy only). Note: OLMv1 allows two ClusterExtensions to share the same CRD **if the CRD content is identical**, but relying on this for coexistence introduces version alignment complexity that is best avoided.
+5. **Potential for future selective dependency installation** - The number of dependencies is likely to grow as more policies are added and the custom policy / extension model matures. Users at some point are likely to want/need to be able to choose which dependencies to deploy based on the policies they want to use.
+6. **No independent installation of Kuadrant components** - When using OLMv1 to install Kuadrant, it is expected that there is no independent installation of Kuadrant components (e.g., Authorino) on the cluster. Users who currently install Authorino independently for standalone use would ideally transition to using Kuadrant with selective profiles (at a future point) to get just the capabilities they need (e.g., AuthPolicy only). 
+> Note: OLMv1 allows two ClusterExtensions to share the same CRD **if the CRD content is identical**, but relying on this for coexistence introduces version alignment complexity that is best avoided.
+
+7. **Roll-forward only updates** - OLMv1 does not document support for downgrading a ClusterExtension to a previous version. Updates to Kuadrant and its dependencies are roll-forward only. If an upgrade fails, the fix is to release a new version that resolves the issue, not to roll back.
 
 
 ### OLMv1 Context
@@ -60,9 +65,6 @@ Reference: [OLMv1 Design Decisions](https://github.com/operator-framework/operat
 | **Flexible bundle contents** | Bundles can contain arbitrary resources (ClusterRoles, etc.), confirming we can ship dependency installer ClusterRoles in the Kuadrant bundle |
 | **Fine-grained version control** | Admins can pin versions per operator. Our operator can set specific versions in the ClusterExtension CRs it creates |
 | **Constraint validation, not resolution** | OLMv1 will check if constraints are met but won't act on them. Reinforces that we must handle installation ourselves |
-| **GitOps-friendly APIs** | ClusterExtension is declarative and eventually-consistent, which fits well with the operator creating/reconciling these CRs |
-| **Per-operator upgrade policies** | Each dependency ClusterExtension can have its own upgrade policy, giving us fine-grained control |
-| **Shared CRDs allowed if identical** | Two ClusterExtensions can share the same CRD if the content is identical. We avoid relying on this by requiring no independent installation of Kuadrant components alongside Kuadrant |
 
 ### Out of Scope
 
@@ -92,7 +94,7 @@ When the user upgrades Kuadrant (by updating the version on the Kuadrant Cluster
 
 ### OLMv1 Detection
 
-The operator must auto-detect whether OLMv1 is present on the cluster before attempting to manage ClusterExtension CRs. This follows the existing pattern used for other dependencies — the operator already detects CRD availability at startup (e.g., Istio, Envoy Gateway, cert-manager CRDs in `internal/controller/state_of_the_world.go`). The same approach would be used to check for the `clusterextensions.olm.operatorframework.io` CRD. If OLMv1 is not installed, the dependency management reconciler is not registered and the operator falls back to the current behaviour of reporting missing dependencies via status conditions.
+The operator must auto-detect whether OLMv1 is present on the cluster before attempting to manage ClusterExtension CRs. This follows the existing pattern used for other dependencies — the operator already detects CRD availability at startup (e.g., Istio, Envoy Gateway, cert-manager CRDs in `internal/controller/state_of_the_world.go`). The same or similar approach would be used to check for the `clusterextensions.olm.operatorframework.io` CRD. If OLMv1 is not installed, the dependency management reconciler is not registered and the operator falls back to the current behaviour of reporting missing dependencies via status conditions. Dependency status would still be collected and reported for v1.
 
 ### RBAC and ServiceAccount Provisioning
 
@@ -140,13 +142,13 @@ spec:
 
 ### Selective Installation via Profiles
 
-A `spec.profiles` field on the Kuadrant CR could drive selective installation — the operator would only create ClusterExtensions for dependencies required by the selected profiles. The exact profile taxonomy (policy-based, capability-based, etc.). This is purely an example to provoke thought and give wider context. Implementation of this is out of scope for this RFC.
+Part of the motivation for this design is to allow the potential for adding selective install as a feature. Speculatively a `spec.profiles` field on the Kuadrant CR could drive selective installation — the operator would only create ClusterExtensions for dependencies required by the selected profiles. Implementation of this is out of scope for this RFC and would be added as a follow up RFC.
 
 ### Upgrade Flow
 
 When Kuadrant itself is upgraded (via its own ClusterExtension), the new version of the operator may require updated versions of its dependencies. The upgrade flow would be:
 
-1. **Kuadrant's ClusterExtension is upgraded** — OLMv1 deploys the new Kuadrant operator image. The new operator binary contains the updated dependency version mappings (e.g., Authorino 0.5.0 → 0.6.0).
+1. **Kuadrant's ClusterExtension is upgraded** — OLMv1 deploys the new Kuadrant operator image. The new operator contains the updated dependency version mappings (e.g., Authorino 0.5.0 → 0.6.0).
 2. **Operator reconciles the Kuadrant CR** — detects that the dependency ClusterExtension CRs specify outdated versions.
 3. **Operator updates dependency ClusterExtension CRs** — patches the `spec.source.catalog.version` field on each dependency ClusterExtension to the required version.
 4. **OLMv1 processes the updated ClusterExtensions** — upgrades each dependency operator using its pre-provisioned ServiceAccount and RBAC.
@@ -165,9 +167,6 @@ The new Kuadrant operator **must** be backwards-compatible with the previous dep
 ### Failure Scenarios
 
 - **Dependency upgrade fails** — the ClusterExtension for a dependency reports a failed state. The Kuadrant operator should surface this in the Kuadrant CR status conditions and not proceed with reconciliation that depends on the failed component.
-- **Catalog unavailable** — if the catalog containing dependency bundles is unreachable, OLMv1 cannot process the ClusterExtension update. The operator should report this as a degraded condition.
-- **Version not found in catalog** — the requested dependency version does not exist in the catalog. The operator should report this clearly in status.
-- **Rollback** — OLMv1 does not provide automatic rollback. If a dependency upgrade fails, the cluster admin would need to manually intervene by either fixing the issue or reverting the Kuadrant ClusterExtension to the previous version, which would cause the operator to reconcile the dependency versions back to their previous values.
 
 ### Version Pinning
 
@@ -250,11 +249,11 @@ Without this change, Kuadrant users on OLMv1 would need to manually create ~20+ 
 # Unresolved questions
 [unresolved-questions]: #unresolved-questions
 
-- What is the exact profile taxonomy? Should profiles map to policy names (`AuthPolicy`, `DNSPolicy`), capability names (`auth`, `dns`, `ratelimiting`), or something else?
-- What are the exact ClusterRole definitions needed for each dependency installer? These need to be derived from each dependency operator's actual RBAC requirements.
-- How should the operator handle the case where a user changes profiles on an existing Kuadrant CR (e.g., removing a profile that has an active dependency)?
-- What is the exact target OCP version for OLMv1 GA?
 - If a cluster already has an independent Authorino installation, what is the migration path for users transitioning to Kuadrant-managed Authorino?
+
+- if a cluster already has OLMv0 installed Kuadrant what is the path to move to OLMv1
+
+- OLMv1 appears to be roll-forward only (no documented downgrade support). This is captured as a requirement, but needs verification against the final OLMv1 GA documentation.
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
