@@ -8,7 +8,7 @@
 # Summary
 [summary]: #summary
 
-Replace OLMv0's automatic dependency installation with a separate umbrella operator that deploys and manages all Kuadrant components. Helm charts become the single manifest source — consumed directly via `helm install` and by the umbrella operator via client-only rendering. The kuadrant-operator is simplified to focus exclusively on policy reconciliation; operator installation and operand creation move to the umbrella operator.
+Replace OLMv0's automatic dependency installation with a separate umbrella operator that deploys and manages all Kuadrant components. Helm charts become the single manifest source — consumed directly via `helm install` and by the umbrella operator via client-only rendering. The kuadrant-operator is simplified to focus exclusively on policy reconciliation; operator installation and operand creation move to the umbrella operator. Extension operators such as [mcp-gateway-operator](https://github.com/Kuadrant/mcp-gateway) that currently rely on OLM dependency resolution to ensure kuadrant-operator is present are also managed by the umbrella operator, removing their direct OLM dependency.
 
 - OpenShift: Umbrella Operator domain
 - Kubernetes: Helm domain
@@ -30,7 +30,8 @@ Target timeline: **end of 2026**.
 4. **Separation of concerns** — the umbrella operator handles deployment; kuadrant-operator handles policy reconciliation and has no OLMv1 awareness.
 5. **Helm as single manifest source** — both installation paths (direct Helm (upstream plain kubernetes) and umbrella operator (OpenShift)) consume the same charts.
 6. **Umbrella operator owns operands** — installs each dependency operator and creates their operands (Authorino, Limitador instances). The kuadrant-operator no longer performs these tasks.
-7. **Extensible** — supports future selective deployment of components based on which policies are enabled.
+7. **Extension operators managed centrally** — operators that depend on kuadrant-operator (e.g., mcp-gateway-operator) are deployed by the umbrella operator after kuadrant-operator, removing their need for OLM dependency declarations.
+8. **Extensible** — supports future selective deployment of components based on which policies are enabled.
 
 ### OLMv1 Context
 
@@ -38,7 +39,7 @@ OLMv1 requires explicit creation of several resources per operator ([getting sta
 
 ### Out of Scope
 
-- Selective component deployment. The architecture supports it and has this in mind for a future iteration, but the initial implementation deploys all components.
+- Selective component deployment. The architecture supports it and has this in mind for a future iteration, but the initial implementation deploys all components including extension operators like mcp-gateway-operator.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
@@ -48,7 +49,7 @@ OLMv1 requires explicit creation of several resources per operator ([getting sta
 1. Create a ClusterCatalog pointing to the Kuadrant catalog image.
 2. Create the umbrella operator's ClusterExtension (with namespace, ServiceAccount, RBAC). This is the only ClusterExtension the user creates.
 3. OLMv1 deploys the umbrella operator.
-4. The umbrella operator renders the Helm charts and deploys all components: CRDs, RBAC, operator Deployments, and operand instances.
+4. The umbrella operator renders the Helm charts and deploys all components: CRDs, RBAC, operator Deployments (including extension operators such as mcp-gateway-operator), and operand instances.
 5. Create the Kuadrant CR (to configure) — kuadrant-operator begins reconciling policies.
 
 Uninstall: delete the Kuadrant CR , then delete the ClusterExtension.
@@ -68,7 +69,7 @@ This ordering is specific to the transition: kuadrant-operator must stop creatin
 1. OLMv1 deploys the new umbrella operator image (containing updated charts and image references).
 2. The umbrella operator re-renders charts, detects drift, and applies changes in order:
    - **CRDs, RBAC, ServiceAccounts** for all components first — ensures new API versions and permissions are in place before any controller tries to use them.
-   - **Dependency operators** (Authorino, Limitador, DNS) — updated and waited on until healthy.
+   - **Dependency operators** (Authorino, Limitador, DNS) and **extension operators** (mcp-gateway-operator) — updated and waited on until healthy.
    - **kuadrant-operator** last — as the policy reconciler, it may depend on new CRD fields or operand capabilities introduced by the dependency updates. Updating it before dependencies would risk it referencing CRD properties that don't exist yet.
 
 # Reference-level explanation
@@ -87,7 +88,7 @@ The current kuadrant-operator chart (`charts/kuadrant-operator/`) is a monolithi
 #### Current state
 
 - One chart with a single `templates/manifests.yaml` containing all operators, CRDs, and RBAC
-- `Chart.yaml` declares subcharts for authorino-operator, limitador-operator, and dns-operator (pulled from `https://kuadrant.io/helm-charts/`)
+- `Chart.yaml` declares subcharts for authorino-operator, limitador-operator, dns-operator, and mcp-gateway-operator (pulled from `https://kuadrant.io/helm-charts/`)
 - `values.yaml` is nearly empty — no configurable values exposed
 - Dependency operator manifests pulled via kustomize remote refs (e.g., `github.com/Kuadrant/authorino-operator/config/deploy?ref=main`)
 - No operand templates — operand creation is handled by kuadrant-operator at runtime
@@ -99,6 +100,20 @@ The current kuadrant-operator chart (`charts/kuadrant-operator/`) is a monolithi
 3. **Operand templates** — the chart includes templates for operand CRs (Authorino, Limitador instances). These are created at install time on both paths, replacing the current runtime creation by kuadrant-operator.
 4. **Dependency operator subcharts** — these already exist in their respective repos. The parent chart's `Chart.yaml` dependencies remain.
 5. **Ordered rendering support** — the umbrella operator renders and applies subcharts sequentially: CRDs first, then dependency operators, then kuadrant-operator.
+
+### Extension Operators
+
+Extension operators are operators that complement kuadrant-operator rather than being consumed by it. The umbrella operator deploys them alongside the dependency operators, removing their need for OLM dependency declarations.
+
+**mcp-gateway-operator** — currently declares an OLMv0 dependency on kuadrant-operator so that users of mcp-gateway can leverage AuthPolicy for authentication and authorization of MCP traffic. Under the umbrella model, mcp-gateway-operator's Helm chart is added as a subchart and deployed in the same phase as the dependency operators. The existing OLM dependency declaration in the mcp-gateway-operator CSV is removed; the umbrella operator guarantees all required components are present.
+
+This pattern extends to any future operator that builds on Kuadrant's policy CRDs — the umbrella operator provides the install ordering guarantee that OLMv0 dependency resolution previously handled.
+
+### OLM Manifest Removal
+
+With the umbrella operator owning deployment of all components via Helm charts, individual operators no longer need their own OLM packaging artifacts (CSV, bundle manifests, catalog entries, `bundle.Dockerfile`). These can optionally be removed from each operator repo, leaving only the Helm chart as the manifest source.
+
+This is **optional per operator**. Operators such as authorino-operator and limitador-operator have standalone use cases outside of a Kuadrant installation and may choose to retain their own OLM bundles for independent installation via OLMv1. Operators that are only used as part of a Kuadrant deployment (e.g., mcp-gateway-operator, kuadrant-operator) are stronger candidates for removal.
 
 ### Kuadrant CR Scope Change
 
@@ -151,7 +166,7 @@ The umbrella operator's ServiceAccount requires broad permissions. These are gra
 # Future possibilities
 [future-possibilities]: #future-possibilities
 
-- **Selective component deployment** — a CR API (e.g., `KuadrantInstall`) mapping enabled policies to required components. Safety checks prevent removing components with active policy CRs.
+- **Selective component deployment** — a CR API (e.g., `KuadrantInstall`) mapping enabled policies to required components. Extension operators like mcp-gateway-operator would be natural candidates for opt-in deployment. Safety checks prevent removing components with active policy CRs.
 
 # Prior art
 [prior-art]: #prior-art
