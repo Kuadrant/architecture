@@ -300,7 +300,37 @@ The umbrella operator's ServiceAccount requires broad permissions. These are gra
 
 ### Alternatives considered
 
-**Single OLMv1 bundle containing all operators** — all-or-nothing; cannot support selective deployment as Kuadrant grows. Doesn't put helm front and centre
+#### Single OLMv1 bundle containing all operators ("big CSV")
+
+Instead of building a new umbrella operator, all component operators (kuadrant-operator, authorino-operator, limitador-operator, dns-operator) are packaged into a single OLM bundle. The CSV's `install.spec.deployments` section contains all four Deployments; `clusterPermissions` and `permissions` contain the RBAC for each operator's ServiceAccount; and all CRDs ship in the bundle's `manifests/` directory. OLM creates and owns everything — ServiceAccounts, RBAC, Deployments, CRDs.
+
+**User experience (OLMv1):**
+
+1. Create a ClusterCatalog pointing to the Kuadrant catalog image.
+2. Create one ClusterExtension (with namespace, ServiceAccount, RBAC). The user-provided ServiceAccount needs permissions broad enough to cover all four operators.
+3. OLMv1 deploys the single CSV — all operators and CRDs are installed as a unit.
+4. Create the Kuadrant CR — kuadrant-operator creates operands and begins reconciling policies as it does today.
+
+**Migration (OLMv0 → big CSV):** Publish a new version of the kuadrant-operator package that contains the big CSV. OLMv0 upgrades the existing Subscription, replacing the old CSV (which declared `olm.package.required` dependencies) with the new one that embeds all operators directly and has no dependency declarations. Dependency operator Subscriptions and CSVs become orphaned and can be cleaned up manually or via a migration job. When OLMv1 arrives, only one ClusterExtension is needed.
+
+**Advantages:**
+
+- **No new operator to build or maintain** — no umbrella operator codebase, image, or CI pipeline. Significantly less engineering effort.
+- **Simpler mental model** — one CSV, one bundle, OLM manages everything.
+- **OLM handles upgrades, health monitoring, and CRD safety checks** — no custom upgrade orchestration needed.
+- **kuadrant-operator stays as-is** — no need to split out operand creation or change Kuadrant CR ownership. The existing reconciliation model is unchanged.
+- **Identical install UX to the umbrella operator** — one ClusterExtension, one action.
+
+**Drawbacks:**
+
+- **All-or-nothing deployment** — every component is always installed. As Kuadrant grows in capabilities (more policy types, extension operators like mcp-gateway-operator), users cannot opt out of components they don't need. This becomes increasingly wasteful and may push toward the umbrella operator pattern later.
+- **No deployment ordering** — OLM applies the bundle as a unit with no guaranteed startup order. kuadrant-operator must tolerate dependency operators not being ready yet (retry loops, degraded status). This is likely already the case but becomes a hard requirement.
+- **No Helm as first-class install path** — Helm charts are not the manifest source; the CSV is. Upstream Kubernetes users without OLM get a different install mechanism, and chart maintenance diverges from the OLM bundle.
+- **Coordinated releases remain** — all operators still ship together at the same version. Independent versioning is not possible.
+- **Extension operator integration is rigid** — folding in new operators (e.g., mcp-gateway-operator) means rebuilding the CSV bundle rather than adding a subchart.
+- **Same CRD ownership conflict** — standalone Authorino + big CSV hits the same OLMv1 single-ownership problem as the umbrella operator approach.
+
+**Assessment:** The big CSV is a viable near-term approach that delivers the same single-action install UX with significantly less engineering effort. It is the pragmatic choice if selective deployment and Helm-first upstream installs are not immediate priorities. However, as Kuadrant's scope grows — more policy types, optional extensions, varied deployment profiles — the all-or-nothing nature of the big CSV is likely to become a constraint, and a transition to the umbrella operator pattern may be warranted.
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
