@@ -467,7 +467,15 @@ The operator must watch `ReferenceGrant` resources in `state_of_the_world.go`. V
 
 ### Extension impact
 
-Extensions receive topology context via gRPC. The topology they receive will be scoped to the Gateways managed by their Kuadrant instance. Extensions using `kuadrant.Resolve()` will only see policies relevant to their instance's Gateways.
+Extensions are out-of-process gRPC clients that connect to the singleton kuadrant-operator (a control plane component). The operator's extension infrastructure — `GlobalMutatorRegistry`, `BlockingDAG`, and Unix socket paths — is per-operator, not per-Kuadrant-instance, and does not change.
+
+What changes is how extensions interact with a multi-root topology:
+
+1. **Topology traversal.** Extensions call `Resolve()` with CEL expressions evaluated against the full cluster topology. Today the topology has a single Kuadrant root, so CEL expressions implicitly resolve to the right context. With multiple Kuadrant roots, extensions that traverse from a Kuadrant node must specify *which* Kuadrant they are operating on behalf of. Extension authors should resolve from the Gateway (which has a single Kuadrant parent) rather than from a Kuadrant root.
+
+2. **Per-Gateway output scoping.** `ApplyWasmConfigMutators()` already filters registered data by Gateway `targetRef` before injecting into EnvoyFilter/EnvoyExtensionPolicy. Each Gateway gets its own scoped Envoy configuration. This is unaffected by multi-tenancy.
+
+3. **Extension reconciler refactor.** `IstioExtensionReconciler` and `EnvoyGatewayExtensionReconciler` use `GetKuadrantFromTopology()` to retrieve observability settings and apply them to all Gateways. Under multi-tenancy, each Gateway's EnvoyFilter/ExtensionPolicy must use the observability config from its owning Kuadrant instance. This is the same `GetKuadrantFromTopology()` → `GetKuadrantForGateway()` refactor applied to all other reconcilers.
 
 ## Error reporting
 
