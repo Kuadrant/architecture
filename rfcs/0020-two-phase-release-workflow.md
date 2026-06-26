@@ -131,7 +131,7 @@ Operators declare their operand dependencies, so the version gate can verify ava
 
 Release branches follow the convention `release-X.Y` where `X.Y` is the minor version, without a `v` prefix.
 For example, version `1.5.0` releases from branch `release-1.5`, and a subsequent patch `1.5.1` releases from the same branch.
-This convention is defined in detail in [RFC 0015](https://github.com/Kuadrant/architecture/blob/main/rfcs/0015-standardize-release-branch-naming.md).
+This convention is defined in detail in [RFC 0018](https://github.com/Kuadrant/architecture/blob/main/rfcs/0018-rlease-branch-naming.md).
 
 Using minor-level branches means patch releases do not require new branches - they reuse the existing release branch with an updated version in `release.yaml`.
 This is critical for automation: a consistent branch naming scheme allows tooling to discover and operate on release branches without per-component configuration.
@@ -467,7 +467,7 @@ This is a separate initiative and does not affect the model defined here.
 
 - **Release branch naming standardization.**
 Full standardization of the `release-X.Y` branch naming convention across all repositories, including migration of existing branches that use different conventions, is tracked as a companion effort.
-See [RFC 0015](https://github.com/Kuadrant/architecture/blob/main/rfcs/0015-standardize-release-branch-naming.md) for details.
+See [RFC 0018](https://github.com/Kuadrant/architecture/blob/main/rfcs/0018-release-branch-naming.md) for details.
 
 - **Automated version gate expansion.**
 The version gate currently checks for GitHub Release existence.
