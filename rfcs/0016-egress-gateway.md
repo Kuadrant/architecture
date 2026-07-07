@@ -1,7 +1,7 @@
 # Egress Gateway Support for Kuadrant
 
 - Feature Name: `egress-gateway`
-- Status: **Draft**
+- Status: **Accepted — Phase 1 Delivered**
 - Start Date: 2026-03-09
 - Authors: Maksym Vavilov
 
@@ -219,15 +219,15 @@ This is the same pattern used by MCP Gateway for [external MCP server registrati
 
 The primary deliverable is ensuring the existing Kuadrant data plane policies work for egress on Istio, investigating DNS routing and credential injection patterns, and providing comprehensive documentation.
 
-## Hypothesis
+## Hypothesis — Validated
 
-Based on code analysis (see [How Kuadrant Targets Gateways](#how-kuadrant-targets-gateways)), existing policies should work on egress without code changes:
+The hypothesis that existing policies work on egress without code changes was confirmed during RHCL 1.4 validation (see [Delivered: RHCL 1.4](#delivered-rhcl-14-developer-preview)):
 
 - The topology builder watches all Gateways regardless of class or labels
 - WasmPlugin and EnvoyFilter use `targetRefs` by gateway name, not direction-specific selectors
 - The wasm-shim operates on standard HTTP request attributes, which are the same for egress traffic
 
-This hypothesis needs runtime validation.
+No kuadrant-operator, wasm-shim, Authorino, or Limitador code changes were needed. The existing data plane is direction-agnostic.
 
 ## AuthPolicy on Egress
 
@@ -282,6 +282,20 @@ Automating DNS routing via DNSPolicy is out of scope for this iteration — see 
 
 The full stack — MCP Gateway for routing, Kuadrant for policy enforcement — needs end-to-end validation on egress.
 
+# Delivered: RHCL 1.4 (Developer Preview)
+
+All initial goals of this RFC were delivered as part of RHCL 1.4. Tracked by [architecture#145](https://github.com/Kuadrant/architecture/issues/145).
+
+The hypothesis was confirmed: the existing wasm-shim, Authorino, and Limitador operate direction-agnostically. No kuadrant-operator code changes were needed.
+
+**Validated capabilities:** AuthPolicy on egress (authorization, namespace-scoped access, credential injection via Vault), RateLimitPolicy on egress (basic and per-workload), DNS-based routing (internal hostname with URLRewrite), credential injection via AuthPolicy `response` section, MCP Gateway on egress, dev environment tooling, documentation, and E2E test coverage.
+
+**Key design decisions:**
+
+- Vault with Kubernetes auth (`kubernetesTokenReview`) is the recommended credential source. The `metadata.kubernetes` approach was rejected by the Authorino team due to security concerns
+- Internal hostname with URLRewrite is the recommended DNS routing pattern
+- Service account identity via `kubernetesTokenReview` enables per-workload rate limiting and authorization
+
 # Component Changes
 
 | Component | Change Type |
@@ -333,6 +347,8 @@ Use the BBR ext-proc framework for credential injection.
 
 **Decision:** Start with Option A to gain experience. Investigation will determine its viability. Learnings will inform whether Option B is needed.
 
+**Update:** Option A was validated and works for the initial use cases. Vault with Kubernetes auth is the recommended credential source. The `metadata.kubernetes` approach was rejected by the Authorino team due to security concerns. Option B remains the long-term direction for advanced use cases (body-phase injection, credential rotation).
+
 # Security Considerations
 
 1. **Credential exposure**: When using AuthPolicy for credential injection, external API credentials in Kubernetes Secrets must be carefully managed via RBAC
@@ -343,19 +359,20 @@ Use the BBR ext-proc framework for credential injection.
 
 These items are out of scope for the initial delivery but inform the long-term direction. They are prioritized by a combination of value and effort.
 
-## P1: Validate Remaining Data Plane Policies
+## P1: Next Phase — Observability and Remaining Policies
 
-If the initial validation confirms that AuthPolicy and RateLimitPolicy work on egress, these policies should work too — they use the same wasm-shim and extension mechanism. Validation effort is low.
+With AuthPolicy and RateLimitPolicy confirmed on egress, the next phase focuses on observability and validating the remaining data plane policies. Tracked by [kuadrant-operator#2087](https://github.com/Kuadrant/kuadrant-operator/issues/2087).
 
-- **TokenRateLimitPolicy** — Token-based rate limiting for outbound AI inference calls. Direct value for cost control by token count, not just request count
+- **Egress observability** — Validate Istio proxy metrics, Envoy access logs, and OTEL distributed tracing through the egress path. Provide an observability guide
+- **TokenRateLimitPolicy on egress** — Token-based rate limiting for outbound AI inference calls. Direct value for cost control by token count, not just request count
+- **TelemetryPolicy on egress** — Custom metric labels for egress traffic observability. Enables labelling outbound requests by destination, workload, or cost center
 - **PlanPolicy** (extension) — Subscription-tier rate limiting on egress. Key for multi-tenant AI platforms (e.g., "free tier gets 10 req/min to OpenAI, paid tier gets 1000 req/min")
-- **TelemetryPolicy** (extension) — Custom metric labels for egress traffic observability. Enables labelling outbound requests by destination, workload, or cost center
 
 ## P2: Policies Requiring New Capabilities
 
 These require design work or new reconciliation modes beyond what the initial validation covers.
 
-- **AuthTokenManagementPolicy** — A dedicated policy for passive credential injection that goes beyond what AuthPolicy's `response` section can provide: declarative credential-to-service binding, N-to-1 credential mapping, credential rotation, body-phase injection. May be a new CRD or an extension to AuthPolicy, depending on learnings from the initial investigation. High value, high effort
+- **AuthTokenManagementPolicy** — A dedicated policy for passive credential injection that goes beyond what AuthPolicy's `response` section can provide: declarative credential-to-service binding, N-to-1 credential mapping, credential rotation, body-phase injection. May be a new CRD or an extension to AuthPolicy. High value, high effort. Remains the long-term path for advanced credential management, given the `metadata.kubernetes` approach was rejected by the Authorino team
 - **DNSPolicy (egress mode)** — Automate DNS-based routing to the egress gateway. Today, cluster CoreDNS forwarding is configured manually. DNSPolicy could automate this by creating DNSRecords mapping external hostnames to the egress gateway's IP and configuring forwarding rules. This requires a new egress reconciliation mode ("redirect external hostnames to gateway internally" vs the current "advertise gateway externally") and warrants its own RFC
 - **OIDCPolicy** (extension) — OIDC-specific authentication on egress. Useful for environments where internal workloads authenticate via OIDC before accessing external services. AuthPolicy already covers the general case, so this is incremental
 - **TLSPolicy (egress mode)** — Provision client certificates (via cert-manager) that the egress gateway presents to external services requiring mTLS. Today this is manually configured via DestinationRule (`mode: MUTUAL` with cert paths). TLSPolicy could automate cert provisioning and rotation. Different from ingress TLSPolicy (which provisions server certs for listeners). Medium effort — cert-manager integration exists but the policy would need to target DestinationRule or ServiceEntry rather than Gateway listeners
@@ -372,7 +389,8 @@ These require significant design work and warrant their own RFCs.
 
 # Execution
 
-Implementation is tracked in the parent GitHub issue: https://github.com/Kuadrant/architecture/issues/145
+- **Phase 1 (Developer Preview):** [architecture#145](https://github.com/Kuadrant/architecture/issues/145) — completed
+- **Phase 2 (Tech Preview):** [kuadrant-operator#2087](https://github.com/Kuadrant/kuadrant-operator/issues/2087) — in progress
 
 ---
 
