@@ -212,6 +212,8 @@ The version `0.0.0` indicates "targets latest" and is not validated by the versi
 - On release branches, the version must not be `0.0.0`.
 - On release branches, dependency versions must not be `0.0.0` - they must be concrete released versions.
 The version gate will verify that a GitHub Release exists for each dependency.
+- Where the component's build system maintains its own version variables (e.g., Makefile variables), these must reflect the values in `release.yaml` on release branches.
+The pre-release workflow is responsible for ensuring this consistency.
 
 ### Pre-release workflow specification
 
@@ -235,7 +237,7 @@ The version gate will verify that a GitHub Release exists for each dependency.
 2. **prepare-release**
    - Create a working branch (e.g., `pre-release-v1.5.0`) from the source branch.
    - Update `release.yaml` with the target version and dependency versions.
-   - Execute component-specific pre-release steps (version bumps in build files, manifest regeneration, lock file updates, etc.).
+   - Execute component-specific pre-release steps, deriving build-system version variables from `release.yaml` (e.g., generating override files, updating version constants in build files, regenerating manifests, updating lock files).
    - Commit and push all changes.
 
 3. **open-pr**
@@ -341,6 +343,7 @@ Each component repository implements the two workflows with component-specific b
 Component-specific areas include:
 
 - **Pre-release steps:** What code changes are needed to prepare a release (e.g., updating version constants in build files, regenerating manifests, updating lock files).
+Where the build system maintains its own version variables, these should be derived from the `release.yaml` to preserve the single source of truth.
 - **Smoke tests:** What validation is appropriate for the component (e.g., `go vet`, `cargo clippy`, `make bundle` validation, OLM bundle checks).
 - **Artifact builds:** What images, charts, or binaries the component produces.
 
@@ -395,6 +398,7 @@ Additionally, tags cannot express dependency relationships.
 - **Version constants in source code only:**
 Different languages declare versions differently (Cargo.toml, Makefile variables, package.json).
 A unified `release.yaml` provides a single, language-agnostic location that tooling can read without understanding the component's build system.
+Build-system-specific version declarations remain for developer-facing build targets, but on release branches they are derived from `release.yaml` by the pre-release workflow rather than maintained independently.
 
 - **No dependency declaration:**
 Without dependency information in a machine-readable format, there is no way to automatically gate operator releases on operand availability.
