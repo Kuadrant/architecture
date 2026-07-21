@@ -8,7 +8,7 @@
 | **CRB** | ClusterRoleBinding |
 | **SA** | ServiceAccount |
 | **CRD** | CustomResourceDefinition |
-| **bind/escalate** | RBAC verbs that allow creating ClusterRoleBindings to named ClusterRoles without holding all their permissions |
+| **bind** | RBAC verb that allows creating ClusterRoleBindings to named ClusterRoles without holding all their permissions |
 | **GITREF** | Git reference (branch, tag, or SHA) used to pull charts from upstream repos |
 | **Wrapper CR** | Authorino/Limitador custom resources created by kuadrant-operator and reconciled by child operators |
 
@@ -100,21 +100,23 @@ graph TB
 ```mermaid
 graph TB
     USER["User"] -->|"creates"| KCR["Kuadrant CR"]
+    USER -->|"creates"| MGCR["MCPGatewayExtension CR"]
     KCR -->|"triggers"| KOP["kuadrant-operator"]
 
     KOP -->|"renders /charts/authorino-operator"| AO["authorino-operator<br/>Deployment + SA + CRB"]
     KOP -->|"renders /charts/limitador-operator"| LO["limitador-operator<br/>Deployment + SA + CRB"]
     KOP -->|"renders /charts/dns-operator"| DO["dns-operator<br/>Deployment + SA + CRB"]
-    KOP -->|"renders /charts/mcp-gateway"| MG["mcp-gateway<br/>Deployment + SA + CRB"]
+    KOP -->|"renders /charts/mcp-gateway"| MG["mcp-gateway controller<br/>Deployment + SA + CRB"]
     KOP -->|"creates wrapper CR"| ACR["Authorino CR"]
     KOP -->|"creates wrapper CR"| LCR["Limitador CR"]
 
     AO -->|"reconciles"| ACR
     LO -->|"reconciles"| LCR
+    MG -->|"reconciles"| MGCR
 
     ACR --> AW["Authorino Deployment"]
     LCR --> LW["Limitador Deployment"]
-    MG --> MGW["MCP broker + router"]
+    MGCR --> MGW["MCP broker + router"]
 ```
 
 ## RBAC Model
@@ -130,7 +132,7 @@ graph LR
     end
 
     subgraph roles["ClusterRoles"]
-        KR["kuadrant-operator-manager<br/>infrastructure perms<br/>+ bind/escalate on child roles"]
+        KR["kuadrant-operator-manager<br/>infrastructure perms<br/>+ bind on child roles"]
         AR["authorino-operator-manager<br/>authorino-manager-role<br/>authorino-manager-k8s-auth-role"]
         LR_["limitador-operator-manager-role"]
         DR["dns-operator-manager-role<br/>dns-operator-remote-cluster-role"]
@@ -145,10 +147,10 @@ graph LR
     OLM_H -->|"ClusterRoleBinding"| KSA
     KSA --> KR
 
-    KUADRANT -->|"ClusterRoleBinding<br/>using bind/escalate"| ASA
-    KUADRANT -->|"ClusterRoleBinding<br/>using bind/escalate"| LSA
-    KUADRANT -->|"ClusterRoleBinding<br/>using bind/escalate"| DSA
-    KUADRANT -->|"ClusterRoleBinding<br/>using bind/escalate"| MSA
+    KUADRANT -->|"ClusterRoleBinding<br/>using bind"| ASA
+    KUADRANT -->|"ClusterRoleBinding<br/>using bind"| LSA
+    KUADRANT -->|"ClusterRoleBinding<br/>using bind"| DSA
+    KUADRANT -->|"ClusterRoleBinding<br/>using bind"| MSA
     ASA --> AR
     LSA --> LR_
     DSA --> DR

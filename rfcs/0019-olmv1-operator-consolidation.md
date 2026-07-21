@@ -40,9 +40,11 @@ Bundles declaring `olm.package.required`, `olm.gvk.required`, or `olm.constraint
 
 The exact process for transitioning a cluster (fully) from OLMv0 to OLMv1 is not yet documented — this is an open question that affects all operators, not just Kuadrant. Currently on OpenShift OLMv1 and OLMv0 run alongside each other. However, regardless of when or how that transition happens, the dependency resolution mechanism Kuadrant relies on will not exist in the future. We should eliminate our dependency declarations now, while still on OLMv0, so that Kuadrant is already compatible when the transition arrives.
 
-## Dependency operators exist to satisfy OLM packaging requirements
+## Per-component OLM packaging adds overhead within a Kuadrant deployment
 
-These dependency operators (authorino-operator, limitador-operator) exist because OLMv0 required each component to be packaged as its own operator with its own CSV, Subscription, and CRD. They were created to satisfy this packaging requirement, not because the workloads they manage have complex lifecycle needs. Each maintains its own release pipeline, bundle images, and catalog entries. Consolidating them under the kuadrant-operator eliminates this per-component overhead.
+Authorino, Limitador, and mcp-gateway are independent projects with standalone use cases outside Kuadrant. Their operators were created in part to support independent installation and lifecycle management. However, within a Kuadrant deployment, they function as internal components whose lifecycle is tied to the Kuadrant CR. The per-component OLM packaging (separate CSV, Subscription, bundle image, catalog entry, release pipeline) adds overhead that is only justified when the components are deployed independently.
+
+This RFC consolidates the Kuadrant-as-a-product installation path. The individual component repos and their Helm charts remain available for standalone installation. Nothing prevents a user from installing just Limitador or just Authorino directly from their own repos.
 
 ## Kuadrant needs to run beyond OpenShift
 
@@ -125,7 +127,7 @@ Resource ownership is clearly split between the installation method and the oper
 |---|---|
 | Component controller Deployments | authorino-operator, limitador-operator, dns-operator, mcp-gateway |
 | Component ServiceAccounts | Per-component identity |
-| Component ClusterRoleBindings | Binds component SAs to pre-installed ClusterRoles using `bind`/`escalate` |
+| Component ClusterRoleBindings | Binds component SAs to pre-installed ClusterRoles using `bind` |
 | Component Roles, RoleBindings | Namespace-scoped RBAC (e.g. leader election) |
 | Component Services, ConfigMaps | Metrics, configuration |
 | Wrapper CRs | Authorino CR, Limitador CR (reconciled by child operators into workloads) |
@@ -140,13 +142,11 @@ All component controller Deployments are owned by the Kuadrant CR via ownerRefer
 
 ## RBAC
 
-The kuadrant-operator does not need to duplicate component controller permissions. The Kubernetes `bind` verb allows creating ClusterRoleBindings to named ClusterRoles without holding all their permissions. The operator's ClusterRole includes `bind`/`escalate` on each component's ClusterRole `resourceNames`.
-
-`bind` is sufficient for steady-state runtime operation (creating ClusterRoleBindings). `escalate` is retained for migration scenarios where the operator may need to update existing ClusterRole rules to align with the consolidated model. Whether rule changes are needed depends on the migration implementation. If migration only requires metadata updates (annotations, labels), `escalate` can be removed.
+The kuadrant-operator does not need to duplicate component controller permissions. The Kubernetes `bind` verb allows creating ClusterRoleBindings to named ClusterRoles without holding all their permissions. The operator's ClusterRole includes `bind` on each component's ClusterRole `resourceNames`. No `escalate` is needed since the operator does not modify ClusterRole rules at runtime; ClusterRoles are pre-installed by the installer (Helm or OLM bundle).
 
 Only ClusterRole names need tracking, not their contents. When a component controller changes its RBAC rules, no kuadrant-operator change is needed unless a ClusterRole is added or renamed.
 
-Component ClusterRoles must use fixed, predictable names. The `bind`/`escalate` permissions use `resourceNames`, so the operator must know the exact names at build time. Charts that derive ClusterRole names from the Helm release name (e.g. via the `fullname` helper) create a fragile dependency that can silently break the RBAC contract. The sync tool validates rendered ClusterRole names at sync time, catching any mismatches before they reach a cluster.
+Component ClusterRoles must use fixed, predictable names. The `bind` permissions use `resourceNames`, so the operator must know the exact names at build time. Charts that derive ClusterRole names from the Helm release name (e.g. via the `fullname` helper) create a fragile dependency that can silently break the RBAC contract. The sync tool validates rendered ClusterRole names at sync time, catching any mismatches before they reach a cluster.
 
 ## Two supported installation methods
 
@@ -154,6 +154,21 @@ Component ClusterRoles must use fixed, predictable names. The `bind`/`escalate` 
 - **OLM**: Single operator in the catalog. The bundle includes all component CRDs and ClusterRoles (from `config/child-operators/` via `config/manifests/kustomization.yaml`). No component controller bundles in the catalog.
 
 Both paths produce the same cluster state: CRDs and ClusterRoles installed, kuadrant-operator running, no component controllers until a Kuadrant CR is created.
+
+## Image references
+
+OLM convention requires all container images to be declared in the CSV's `relatedImages` section and as `RELATED_IMAGE_*` environment variables on the operator Deployment. This is used for image mirroring in disconnected environments, version pinning at release time, and downstream build system automation. The consolidated kuadrant-operator CSV must include all component images that were previously declared in individual operator CSVs:
+
+| Env var | Default image | Purpose |
+|---|---|---|
+| `RELATED_IMAGE_AUTHORINO_OPERATOR` | `quay.io/kuadrant/authorino-operator:latest` | Authorino operator controller |
+| `RELATED_IMAGE_AUTHORINO` | `quay.io/kuadrant/authorino:latest` | Authorino workload |
+| `RELATED_IMAGE_LIMITADOR_OPERATOR` | `quay.io/kuadrant/limitador-operator:latest` | Limitador operator controller |
+| `RELATED_IMAGE_LIMITADOR` | `quay.io/kuadrant/limitador:latest` | Limitador workload |
+| `RELATED_IMAGE_DNS_OPERATOR` | `quay.io/kuadrant/dns-operator:latest` | DNS operator controller |
+| `RELATED_IMAGE_MCP_GATEWAY` | `ghcr.io/kuadrant/mcp-controller:latest` | MCP Gateway controller |
+
+These are declared as environment variables on the kuadrant-operator Deployment (`config/manager/manager.yaml`). The downstream build system overrides them with version-pinned or mirrored image references. The Helm reconcilers read these env vars and apply the correct images when rendering child operator charts, either by patching the rendered Deployment image directly (for simple charts that don't support values-based overrides) or by passing Helm values (for charts with configurable image fields).
 
 ## Wrapper CRs preserved
 
@@ -170,7 +185,7 @@ If the Kuadrant CR is deleted and the cascade deletes the controllers simultaneo
 
 ## OLM bundle and catalog
 
-The bundle/catalog pipeline deals with a single package (kuadrant-operator). Component controller bundle images, catalog channel entries, and dependency injection are removed. Component CRDs and ClusterRoles are included in the kuadrant-operator bundle directly from `config/child-operators/`.
+The bundle/catalog pipeline deals with a single package (kuadrant-operator). Component controller bundle images, catalog channel entries, and dependency injection are removed. Component CRDs and ClusterRoles are included in the kuadrant-operator bundle directly from `config/child-operators/`. All component CRDs are declared as `owned` in the CSV, making kuadrant-operator the sole OLM owner. This requires a pre-upgrade cleanup step for existing multi-operator installations (see [Migration](#migration-from-multi-operator-olm-installation)).
 
 ## Component repos
 
@@ -187,16 +202,126 @@ Since component repos no longer need to produce their own OLM bundles or catalog
 
 ## Automated dependency sync
 
-Component repos need automation to notify the kuadrant-operator when their charts change. A pattern already exists between authorino and authorino-operator: push to main triggers a `repository_dispatch` to the downstream repo, which runs the sync tool and creates a PR.
+With the kuadrant-operator consuming charts from multiple child repos, automation is needed to keep them in sync. A pattern for this already exists between authorino and authorino-operator: push to main triggers a `repository_dispatch` to the downstream repo, which runs the sync tool and creates a PR.
 
-## Migration considerations
+The same pattern should be adopted for the kuadrant-operator. When a child repo's CI completes successfully on a tracked branch, it dispatches to the kuadrant-operator. The sync tool runs, and if there are changes, a PR is created or updated. The automation should manage a single open PR per target branch and child component (e.g. `sync/main/authorino-operator`, `sync/release-v1.5/authorino-operator`), force-updating it on each trigger rather than accumulating stale PRs.
 
-- **CRD ownership transfer**: OLM tracks CRD ownership via annotations. These need updating during the transition.
-- **Orphaned OLM resources**: OLM will not automatically uninstall previously resolved child operators. Subscriptions, CSVs, and associated resources must be explicitly cleaned up.
-- **Control plane resource conflicts**: existing Deployments may have different field managers (OLM vs SSA). The safest approach is to delete old control plane resources before upgrade. This does not affect the data plane.
-- **Data plane continuity**: wrapper CRs must be preserved throughout migration. Their workloads continue running uninterrupted.
+This automation must support not just `main` but also `release-*` branches. Multiple kuadrant-operator release branches may track different branches of the same child component. For example, `kuadrant-operator/main` may track `authorino-operator/main` while `kuadrant-operator/release-v1.5` tracks `authorino-operator/release-v1.5`.
+
+Changes to the release process and version pinning strategy are out of scope for this RFC and will be addressed separately.
+
+## Migration from multi-operator OLM installation
+
+### The problem: OLM GVK conflict
+
+OLM's dependency resolver prevents two CSVs from providing the same GVK (Group-Version-Kind) within a namespace. When the consolidated kuadrant-operator bundle declares child CRDs (AuthConfig, Limitador, DNSRecord, etc.) as `owned`, the resolver sees a conflict with the still-installed child operator CSVs that also own those GVKs.
+
+This conflict manifests as a `ConstraintsNotSatisfiable` condition on the Subscription:
+
+```
+constraints not satisfiable: kuadrant-operator.v0.0.1 and dns-operator.v0.0.0
+provide DNSHealthCheckProbe (kuadrant.io/v1alpha1)
+```
+
+The GVK properties are baked into the bundle by `opm render` from any CRDs present in the bundle image. They cannot be removed from the CSV `owned` list without also removing the CRDs from the bundle, and they cannot be removed from the `olm.gvk` catalog properties at all since `opm` generates them from the bundle content.
+
+The upgrade stalls safely: the existing deployment continues running, no data is lost, and the user has time to resolve the conflict.
+
+### Chosen approach: documented migration cleanup
+
+The consolidated bundle declares all child CRDs as `owned`. The OLM upgrade stalls until the user removes the existing child operator Subscriptions and CSVs that conflict. This is a one-time migration step.
+
+In practice, the catalog update happens first (either pushed by an administrator or picked up automatically by OLM's catalog polling). The upgrade stalls safely, and the user then performs the cleanup to unblock it. For users who want full control over timing, setting `installPlanApproval: Manual` on the Subscription before the catalog update is recommended.
+
+**Migration steps:**
+
+```bash
+# 1. (Recommended) Set manual approval to control upgrade timing
+kubectl patch subscription kuadrant -n kuadrant-system \
+  --type=merge -p '{"spec":{"installPlanApproval":"Manual"}}'
+
+# 2. Remove child operator subscriptions (and mcp-gateway if installed standalone)
+kubectl delete subscription -n kuadrant-system \
+  authorino-operator-preview-kuadrant-operator-catalog-kuadrant-system \
+  dns-operator-preview-kuadrant-operator-catalog-kuadrant-system \
+  limitador-operator-preview-kuadrant-operator-catalog-kuadrant-system
+# If mcp-gateway was installed standalone:
+# kubectl delete subscription -n <namespace> <mcp-gateway-subscription-name>
+
+# 3. Remove child operator CSVs (and mcp-gateway if installed standalone)
+kubectl delete csv -n kuadrant-system \
+  authorino-operator.v0.0.0 \
+  dns-operator.v0.0.0 \
+  limitador-operator.v0.0.0
+# If mcp-gateway was installed standalone:
+# kubectl delete csv -n <namespace> <mcp-gateway-csv-name>
+
+# 4. If using manual approval, approve the install plan
+kubectl get installplan -n kuadrant-system
+kubectl patch installplan <name> -n kuadrant-system \
+  --type=merge -p '{"spec":{"approved":true}}'
+```
+
+**Tested behaviour** (verified on OpenShift CRC):
+
+1. Deleting child operator CSVs does **not** cascade-delete their CRDs. OLM tracks CRD ownership via labels (`operators.coreos.com/<operator>.<namespace>`) and annotations, not via Kubernetes ownerReferences. CRDs are cluster-scoped and CSVs are namespace-scoped, so Kubernetes cross-scope garbage collection does not apply.
+2. Deleting child CSVs **does** remove their managed Deployments (the child operator controllers stop).
+3. After cleanup, OLM resolves the upgrade and installs the consolidated bundle. The bundle re-installs all CRDs (updating them if schemas changed) and the kuadrant-operator deploys child controllers via Helm rendering.
+4. With automatic upgrades, the upgrade stalls with `ResolutionFailed` until the cleanup is performed. The existing deployment continues running with no data loss. Once the user performs the cleanup, the next resolver cycle (every few seconds) succeeds.
+
+The `ResolutionFailed` condition message clearly identifies the GVK conflict, making it straightforward to diagnose and point users at the migration documentation.
+
+### Alternatives considered for migration
+
+#### Transition release with runtime CRD management
+
+A stepping-stone release where the bundle contains no child CRDs. The operator applies CRDs at runtime, removes child subscriptions/CSVs programmatically, and sets OLM ownership labels. The next release then includes child CRDs as `owned` in the bundle.
+
+**Rejected because:**
+- Requires granting the operator `apiextensions.k8s.io` permissions to create/update CRDs. The `create` verb cannot be scoped by `resourceNames` (the resource doesn't exist yet), so it grants broad CRD creation ability.
+- Creates a window where child CRDs are unmanaged by OLM. No CSV declares them as `owned`, so OLM provides no protection against another operator claiming those GVKs.
+- Adds a release that exists solely for migration mechanics, increasing complexity.
+- The two-phase approach (transition + final) doubles the migration testing surface.
+
+#### Stripping child CRDs from CSV owned list
+
+Keep child CRDs in the bundle but remove them from the CSV's `spec.customresourcedefinitions.owned` list in a post-generation step. This avoids the GVK conflict at the CSV level.
+
+**Rejected because:**
+- `opm render` generates `olm.gvk` properties from CRDs present in the bundle image, regardless of what the CSV declares. The resolver uses these properties, not the CSV's `owned` list. Even with child CRDs stripped from `owned`, the resolver still sees the GVK conflict.
+- `operator-sdk bundle validate` rejects bundles where CRDs are present but not declared in the CSV. While validation can be skipped, it indicates the bundle is in an unsupported state.
+
+#### New API versions for child CRDs
+
+Introduce new API versions (e.g. `v1alpha2`) for child CRDs to avoid GVK overlap with existing child operator CSVs.
+
+**Rejected because:**
+- CRDs must still serve existing versions for backwards compatibility. A CRD serving both `v1alpha1` and `v1alpha2` still provides the `v1alpha1` GVK, which conflicts with the child CSV.
+- Creating new API versions purely for migration mechanics adds permanent API surface area for a transient problem.
+- Does not address the child subscription constraint (subscriptions pin child CSVs regardless of GVK overlap).
+
+### Other migration considerations
+
+- **Data plane continuity**: wrapper CRs (Authorino CR, Limitador CR) and their workloads are preserved throughout migration. Deleting child CSVs removes operator controllers but does not affect running workloads (Authorino server, Limitador server).
+- **Control plane gap**: between deleting child CSVs (which removes child controllers) and the consolidated operator starting (which redeploys them via Helm), there is a brief window where child controllers are not running. During this window, changes to wrapper CRs or child CRDs are not reconciled. Existing workloads continue running.
 - **Resource naming consistency**: resource names produced by the chart rendering should match names currently used by OLM-installed operators to avoid orphaned resources.
 - **Consistent labelling**: the umbrella operator can apply consistent labels to all managed resources, addressing existing gaps (e.g. Authorino Deployment lacks distinguishing labels for topology tracking).
+
+### Upgrade testing
+
+Automated upgrade tests must be established to validate the migration path from the current multi-operator OLM installation to the consolidated operator. These tests should:
+
+- Start with the previous release installed via OLM (all 4 operators with their CSVs)
+- Create a Kuadrant CR with active policies and ingress traffic
+- Perform pre-upgrade cleanup (remove child subscriptions and CSVs)
+- Upgrade to the consolidated release via OLM catalog channel
+- Verify all child CRDs survived the migration
+- Verify kuadrant-operator CSV declares ownership of all CRDs
+- Verify all component controllers are running (now managed by kuadrant-operator)
+- Verify zero data plane disruption throughout (policies continue to be enforced, no traffic loss)
+- Verify CRD schema changes are applied correctly when present
+
+These tests should run in CI for every release and serve as ongoing regression testing for the OLM upgrade path.
 
 # Future possibilities
 [future-possibilities]: #future-possibilities
@@ -211,7 +336,7 @@ This RFC deliberately preserves wrapper CRs and child operator controllers. A fo
 # Drawbacks
 [drawbacks]: #drawbacks
 
-- **Broader RBAC for kuadrant-operator**: the kuadrant-operator now needs permissions to manage Deployments, Services, RBAC, and ConfigMaps for all component controllers, plus `bind`/`escalate` on their ClusterRoles.
+- **Broader RBAC for kuadrant-operator**: the kuadrant-operator now needs permissions to manage Deployments, Services, RBAC, and ConfigMaps for all component controllers, plus `bind` on their ClusterRoles.
 - **Chart sync maintenance**: component controller charts must be kept in sync. Automated dependency sync (via GitHub dispatch) mitigates this but adds CI complexity.
 - **Finalizer ordering**: the Kuadrant CR must manage deletion order to prevent wrapper CR finalizers from being orphaned. This adds reconciliation complexity.
 
@@ -277,8 +402,6 @@ Each component published as its own independent OLM package with no dependency d
 
 - **OLMv0 to OLMv1 cluster transition**: the exact process for migrating a cluster from OLMv0 to OLMv1 is not documented. The umbrella operator approach ensures Kuadrant is ready regardless of how this transition works.
 
-- **OLMv0 behaviour when a CSV drops dependency declarations**: when the kuadrant-operator CSV is upgraded to a version that removes its `olm.package.required` declarations, what happens to the dependency Subscriptions/CSVs that OLMv0 auto-installed? The OLMv1 design doc states they are not automatically removed, but this needs verification.
-
-- **CRD ownership conflicts with standalone installations**: if standalone Authorino is already installed on a cluster, the kuadrant-operator's bundle includes Authorino CRDs. Under OLMv1's single-ownership model, two bundles cannot own the same CRDs.
+- **CRD ownership conflicts with standalone installations**: if standalone Authorino is already installed on a cluster, the kuadrant-operator's bundle includes Authorino CRDs. Under OLMv1's single-ownership model, two bundles cannot own the same CRDs. This is the same GVK conflict pattern as the migration scenario, and would require the standalone operator to be removed first.
 
 - **Wrapper CR removal timeline**: this RFC preserves wrapper CRs. The timeline and approach for removing them depends on how much the Authorino and Limitador CRs are used for direct user customisation vs being purely internal. This will be addressed in a follow-on RFC.
