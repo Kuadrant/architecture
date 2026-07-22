@@ -101,22 +101,39 @@ graph TB
 graph TB
     USER["User"] -->|"creates"| KCR["Kuadrant CR"]
     USER -->|"creates"| MGCR["MCPGatewayExtension CR"]
-    KCR -->|"triggers"| KOP["kuadrant-operator"]
 
-    KOP -->|"renders /charts/authorino-operator"| AO["authorino-operator<br/>Deployment + SA + CRB"]
-    KOP -->|"renders /charts/limitador-operator"| LO["limitador-operator<br/>Deployment + SA + CRB"]
-    KOP -->|"renders /charts/dns-operator"| DO["dns-operator<br/>Deployment + SA + CRB"]
-    KOP -->|"renders /charts/mcp-gateway"| MG["mcp-gateway controller<br/>Deployment + SA + CRB"]
-    KOP -->|"creates wrapper CR"| ACR["Authorino CR"]
-    KOP -->|"creates wrapper CR"| LCR["Limitador CR"]
+    subgraph operator-ns["Operator namespace (e.g. kuadrant-system)"]
+        KOP["kuadrant-operator"]
+    end
+
+    KCR -->|"triggers"| KOP
+
+    subgraph kuadrant-ns["Kuadrant CR namespace"]
+        AO["authorino-operator<br/>Deployment + SA + CRB"]
+        LO["limitador-operator<br/>Deployment + SA + CRB"]
+        DO["dns-operator<br/>Deployment + SA + CRB"]
+        MG["mcp-gateway controller<br/>Deployment + SA + CRB"]
+        ACR["Authorino CR"]
+        LCR["Limitador CR"]
+        AW["Authorino Deployment"]
+        LW["Limitador Deployment"]
+        MGW["MCP broker + router"]
+    end
+
+    KOP -->|"renders chart"| AO
+    KOP -->|"renders chart"| LO
+    KOP -->|"renders chart"| DO
+    KOP -->|"renders chart"| MG
+    KOP -->|"creates wrapper CR"| ACR
+    KOP -->|"creates wrapper CR"| LCR
 
     AO -->|"reconciles"| ACR
     LO -->|"reconciles"| LCR
     MG -->|"reconciles"| MGCR
 
-    ACR --> AW["Authorino Deployment"]
-    LCR --> LW["Limitador Deployment"]
-    MGCR --> MGW["MCP broker + router"]
+    ACR --> AW
+    LCR --> LW
+    MGCR --> MGW
 ```
 
 ## RBAC Model

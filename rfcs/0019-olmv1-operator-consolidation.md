@@ -138,7 +138,11 @@ The operator does not create or modify cluster-scoped resources (CRDs, ClusterRo
 
 When a user creates a Kuadrant CR, the kuadrant-operator renders each component controller's Helm chart from `/charts/<name>/` in the container image using the Helm Go SDK (`ClientOnly=true`, `DryRun=true`). The rendered namespaced resources are applied via Server-Side Apply with the kuadrant-operator as the field manager.
 
+Component controllers are deployed into the Kuadrant CR's namespace, not the kuadrant-operator's namespace. This is a change from the current model where all child operators run in `kuadrant-system` regardless of the Kuadrant CR's location. This approach moves towards supporting future multi-tenanted control plane scenarios.
+
 All component controller Deployments are owned by the Kuadrant CR via ownerReference. This includes dns-operator, which previously ran independently and did not require a Kuadrant CR.
+
+Observability (metrics collection, ServiceMonitors, log aggregation) must account for component controllers running in the Kuadrant CR's namespace rather than a fixed operator namespace.
 
 ## RBAC
 
