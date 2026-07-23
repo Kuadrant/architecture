@@ -3,13 +3,13 @@
 - Feature Name: `token_rate_limit_reservations`
 - Status: Draft
 - Start Date: 2026-07-20
-- RFC PR: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/pull/0000)
-- Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
+- RFC PR: [Kuadrant/architecture#190](https://github.com/Kuadrant/architecture/pull/190)
+- Issue tracking: ~[Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)~
 - Original spec: [TokenRateLimitPolicy GA](https://docs.google.com/document/d/1Lmy52cZZuteJj8cxVNEcC5q59YYB2MV74naGKpkweds/edit?tab=t.0#heading=h.803yw4a9qwi9)
 
 # Summary
 
-`TokenRateLimitPolicy` ([RFC 0013](./0013-ai-policies.md)) checks capacity when a request arrives but only reports actual token usage after the model responds, which lets concurrent in-flight requests race past a limit before any of them report usage. This RFC introduces a **reservation layer** in Limitador: on arrival, an estimated token volume is reserved and held (with a TTL) against a limit's capacity; when the response comes back, the caller commits the reservation with actual usage in a single call, releasing any over-reservation immediately. Rejection semantics, rate-limit headers, and multi-limit all-or-nothing behavior are unchanged. The feature is additive at every layer (new gRPC RPCs, new CRD field, new Limitador flag) and is enabled by default with an explicit opt-out.
+`TokenRateLimitPolicy` ([RFC 0013](./0013-ai-policies.md)) checks capacity when a request arrives but only reports actual token usage after the model responds, which lets concurrent in-flight requests race past a limit before any of them report usage. This RFC introduces a **reservation layer** in Limitador: on arrival, an estimated token volume is reserved and held (with a TTL) against a limit's capacity; when the response comes back, the caller commits the reservation with actual usage in a single call, releasing any over-reservation immediately. Rejection semantics, rate-limit headers, and multi-limit all-or-nothing behavior are unchanged. The feature is additive at every layer (new gRPC RPCs, new CRD field, new Limitador flag) and is enabled by default, with an explicit `CheckReport` mode to revert to today's behavior.
 
 # Motivation
 
@@ -35,16 +35,16 @@ Rejections, `429` responses, rate-limit headers, and how multiple limits interac
 
 Nothing has to change. On a cluster running a compatible Limitador and operator, every `TokenRateLimitPolicy` automatically starts holding capacity for the estimated token cost of a request the moment it arrives, instead of only accounting for it after the model responds. No CR edits or policy edits required to get this protection.
 
-The one new thing available is a **cluster-wide opt-out**, on the `Kuadrant` CR:
+The one new thing available is a **cluster-wide mode switch**, on the `Kuadrant` CR:
 
 ```yaml
 apiVersion: kuadrant.io/v1beta1
 kind: Kuadrant
 spec:
   tokenRateLimiting:
-    reservations:
-      disable: false   # default; set to true to revert every TokenRateLimitPolicy
-                        # in the cluster to today's check/report behavior
+    mode: Reservation   # default; set to CheckReport to revert every
+                         # TokenRateLimitPolicy in the cluster to today's
+                         # check/report behavior
 ```
 
 ## For policy owners
@@ -127,6 +127,19 @@ If the model call fails, times out, or the gateway crashes before `Commit` is ev
 
 Existing `TokenRateLimitPolicy` resources need no changes. They pick up the new default behavior automatically once both the operator and Limitador in the cluster support it.
 The `RateLimitPolicy` (non-token) is entirely unaffected; it does not go through any of the code paths this RFC touches.
+
+### A de facto per-limit switch: `reservation.amount: 0`
+
+Setting a limit's `reservation.amount` to `0`, as a literal or as the result of its CEL expression for some/all requests, is effectively a way to disable reservations for that one limit, without any new API surface. `Reserve` still gets called and still runs the same admission check (`counter.value + outstanding(counter) + 0 <= limit`), but since nothing is held, that limit gets none of the race-closing protection from [Motivation](#motivation): behaviorally identical, for that limit, to today's `CheckRateLimit(hits_addend=0)`.
+
+This is meaningfully different from the cluster-wide `mode` switch, and the difference matters operationally:
+
+- `mode: CheckReport` on the `Kuadrant` CR removes reliance on the reservation machinery entirely: the operator generates the old `Check`/`Report` wasm actions, and `Reserve`/`Commit` are never called for any policy in the cluster.
+- `reservation.amount: 0` on a limit still fully exercises the reservation machinery: a `Reserve` call is made, a `ReservationEntry` with `amount: 0` is created and tracked in the per-counter registry, and `Commit` still looks it up and removes it. Only the *quantity* held is zero.
+
+So if a critical issue is ever found in the reservation machinery itself (the registry, TTL/expiry logic, the `Reserve`/`Commit` RPCs), setting every limit's `amount` to `0` does not route around it. `mode: CheckReport` is the only switch that actually does. `reservation.amount: 0` is a per-limit "don't hold capacity for this limit" knob, not a kill switch for the reservation feature.
+
+[Future possibilities](#future-possibilities) proposes a per-`TokenRateLimitPolicy` override of `mode` as well.
 
 # Reference-level explanation
 
@@ -264,7 +277,7 @@ A server-level flag, `--enable-reservations` (default: `false`, i.e. reservation
 
 **kuadrant-operator**
 
-- `Kuadrant` CR field (`spec.tokenRateLimiting.reservations`) and `TokenRateLimitPolicy` `reservation` field (`amount`, `ttl` CEL expressions), including defaults/overrides merge behavior.
+- `Kuadrant` CR field (`spec.tokenRateLimiting.mode`, enum `Reservation`/`CheckReport`) and `TokenRateLimitPolicy` `reservation` field (`amount`, `ttl` CEL expressions), including defaults/overrides merge behavior.
 - Default `amount`/`ttl` CEL generation for limits that omit `reservation`
 - Reconciler branch generating `Reserve`/`Commit` vs `Check`/`Report` wasm actions based on effective state.
   - **Effectively active**: generate a `Reserve` action (new `ServiceType::RateLimitReserve`) at request phase, with a `message_builder` evaluating `reservation.amount`/`reservation.ttl`, and a `Commit` action (new `ServiceType::RateLimitCommit`) at response/stream-end phase.
@@ -295,5 +308,10 @@ Regular `RateLimitPolicy` is built by an entirely separated code and is never to
 
 # Future possibilities
 
-- Per-`TokenRateLimitPolicy` override of the cluster-wide reservation toggle, reusing the existing `PolicyRuleDefaultsMergeStrategy`/`Overrides` machinery from [RFC 0009](./0009-defaults-and-overrides.md).
-- Upgrading `RocksDbStorage` and the distributed backend from their local-memory-only reservation registry to a registry persisted in that backend's own store, bringing them to the same multi-replica guarantee as the Redis-based backends.
+## A `mode` override at the `TokenRateLimitPolicy` level
+
+Today `mode` is cluster-wide only, on the `Kuadrant` CR. Per-limit is already covered without any new API surface: `reservation.amount: 0` disables reservations for one named limit, as described [above](#a-de-facto-per-limit-switch-reservationamount-0). Though it still exercises the reservation machinery itself, just holding a zero quantity. What's still missing is a genuine bypass at the policy level: an entire `TokenRateLimitPolicy` falling back to `CheckReport`, generating `Check`/`Report` wasm actions instead of `Reserve`/`Commit` for every limit it defines, without touching the cluster-wide switch. This would reuse the existing `PolicyRuleDefaultsMergeStrategy`/`Overrides` machinery from [RFC 0009](./0009-defaults-and-overrides.md).
+
+The correctness constraint any such design must satisfy: **a single Limitador counter must never be admitted against under both modes.** Admission is computed purely from the counter's own state (`counter.value + outstanding(counter) + requested_amount <= limit`, see [above](#reservation-entry-and-per-counter-registry)); a `Reservation`-mode caller pays into `outstanding(counter)` up front, a `CheckReport`-mode caller never does. If the *same* counter received both kinds of caller, `CheckReport` traffic would race past the limit exactly as in today's bug, while consuming headroom that `Reservation` traffic honestly held back for.
+
+A per-policy toggle is safe by construction. Kuadrant-operator already guarantees that two different `TokenRateLimitPolicy` resources, even with identically-shaped limit rules targeting the same route/gateway, can never collide on the same Limitador counter: each named limit gets its own `conditions` entry keyed by a hash of `<policy namespace>/<policy name>/<limit key>`, and that identifier is part of a Limitador `Counter`'s identity (`namespace + conditions + variables`) alongside the resolved counter variables. So every counter a policy produces is already exclusive to that policy, and one `mode` value per policy can never split a counter across modes. That same per-limit exclusivity is what already makes `reservation.amount: 0` a safe, collision-free way to disable reservations at limit granularity today. Any future proposal introducing toggle granularity *finer* than a named limit would need its own mechanism to guarantee counter-exclusivity, since nothing below the limit level currently carries a unique identifier.
