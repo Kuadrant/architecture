@@ -121,7 +121,7 @@ sequenceDiagram
   end
 ```
 
-If the model call fails, times out, or the gateway crashes before `Commit` is ever sent, the reservation simply expires on its own TTL and stops holding capacity. No cleanup call is required, and the counter itself is never touched by an expired reservation, so a failed request never costs quota.
+If the model call fails, times out, or the gateway crashes before `Commit` is ever sent, the reservation simply expires on its own TTL and stops holding capacity. No cleanup call is required, and the counter itself is never touched by an expired reservation, so a failed request never costs quota. Relying on TTL expiry as the *only* reclamation path for failed requests has a cost under repeated failures; see [Security considerations](#security-considerations) for why the gateway should also commit proactively on the error path.
 
 ## Migration
 
@@ -190,6 +190,21 @@ Clamping to the counter's own window boundary is what prevents a reservation fro
 
 - **In-memory backend**: a dedicated Moka cache for reservations using Moka's per-entry `Expiry` trait.
 - **Redis backend**: reservation entries are hash field *values* (`amount` + `expires_at`) under a key per counter. A key-level `EXPIRE` on the hash reclaims one whose counters are never touched again.
+
+### Reservation amount clamp
+
+`reservation.amount` is a free-form CEL expression with no ceiling of its own: a single request can compute an arbitrarily large `amount`, and if admitted, that amount sits in `outstanding(counter)` for the full TTL, holding capacity back from every other request against that same counter for the duration. This gets the same treatment as TTL above: an operator-configured safety net layered on top of whatever the caller-supplied CEL produces, computed independently **per counter** (since `limit(counter)` can differ across the counters one reservation touches, e.g. a per-minute and a per-day rate on the same limit):
+
+```text
+requested_amount(counter) = min(
+    caller_amount,                                     // caller CEL result
+    limit(counter) * server_max_reservation_fraction   // operator-configured safety clamp
+)
+```
+
+`server_max_reservation_fraction` is a new server-level flag, `--max-reservation-fraction` (default: `0.5`), expressed as a fraction of the counter's own limit rather than an absolute token count, so it scales automatically across limits of very different sizes without per-limit tuning. This is the `requested_amount` that feeds the admission check above and the value stored as `ReservationEntry.amount`; it is not necessarily identical across every counter a single reservation touches.
+
+This clamp only affects what's held at `Reserve` time for admission purposes; `Commit` is unaffected and always applies the caller's real `actual_amount` unconditionally (see [`Commit` explained](#commit-explained)). The honest cost of the clamp: a single genuinely large request can be under-reserved relative to what it actually ends up consuming, and that gap only closes once `Commit` runs.
 
 ### New gRPC interface
 
@@ -266,6 +281,7 @@ A server-level flag, `--enable-reservations` (default: `false`, i.e. reservation
 - `RateLimiter::reserve` / `RateLimiter::commit_reservation` (and async twins), composed from existing `counters_that_apply` / `update_counter` / admission-check logic.
 - `Reserve` / `Commit` proto messages and RPCs on the existing Kuadrant service, implemented alongside (not replacing) `CheckRateLimit`/`Report`.
 - `--disable-reservations` server flag.
+- `--max-reservation-fraction` server flag (default `0.5`) implementing the per-counter reservation amount clamp, see [Reservation amount clamp](#reservation-amount-clamp).
 - Concurrency/race tests exercising the scenario in [Motivation](#motivation) directly.
 
 **wasm-shim**
@@ -274,6 +290,7 @@ A server-level flag, `--enable-reservations` (default: `false`, i.e. reservation
 - `ServiceType` gains `RateLimitReserve` / `RateLimitCommit`, additive to the existing open enum (`RateLimit | RateLimitCheck | RateLimitReport | Auth | Tracing | Dynamic`). Existing variants and their handling in `DynamicService`/`DynamicTask` are untouched.
 - `reservation.amount` / `reservation.ttl` are evaluated exactly like `hits_addend` is today: via `message_builder` CEL on the `Reserve` action.
 - The `reservation_id` returned by `Reserve` is captured via an `on_reply` → `Store` action into `ReqRespCtx.stored_values`, the same mechanism already used to carry state between phases of one HTTP transaction . It needs no host export, since it's read back within the same `KuadrantFilter` instance later in the same request.
+- On the error path (model call failure, timeout, non-2xx from the model server), issue `Commit` immediately (typically with `actual_amount: 0`) instead of relying solely on TTL expiry to reclaim the reservation, see [Security considerations](#security-considerations).
 
 **kuadrant-operator**
 
@@ -285,6 +302,13 @@ A server-level flag, `--enable-reservations` (default: `false`, i.e. reservation
 - Docs and e2e tests covering both modes and the upgrade-window transition.
 
 Regular `RateLimitPolicy` is built by an entirely separated code and is never touched by this branch.
+
+# Security considerations
+
+A reservation holds real capacity before the model responds and before the request is known to succeed. This layer keeps *admitted* traffic from racing past a limit; it is not, and doesn't attempt to be, a defense against raw request volume. That's still the job of ingress-level protections (auth, connection limits, network-layer rate limiting).
+
+- **Unbounded amount.** `reservation.amount` is free-form CEL with no ceiling; an admitted request could reserve close to a counter's entire capacity, starving other traffic for the TTL. Mitigated by the [reservation amount clamp](#reservation-amount-clamp) independent of what the caller's CEL computes.
+- **Reservation and abandon amplification.** A reservation holds capacity until `Commit` or TTL expiry, whichever comes first. Relying on TTL alone lets an attacker cheaply hold capacity for up to the full TTL per request by repeatedly triggering fast failing requests (bad payloads, errors before reaching the model, dropped connections). Two mitigations bound this: the amount clamp above caps the blast radius per reservation, and the wasm-shim commits immediately (`actual_amount: 0`) on the error path instead of waiting out the TTL (see [Expected work by component](#expected-work-by-component)), shrinking exposure from "up to `reservation.ttl`" to "time to detect the failure."
 
 # Drawbacks
 
