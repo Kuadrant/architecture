@@ -177,7 +177,7 @@ A reservation's `expires_at`, computed independently **for each counter it touch
 expires_at(counter) = min(
     now + reservation.ttl,           // caller-supplied TTL (CEL-computed, see above)
     current_window_expiry(counter),  // this counter's own window boundary
-    max_reservation_ttl              // operator-configured safety clamp
+    now + max_reservation_ttl        // operator-configured safety clamp
 )
 ```
 
