@@ -26,6 +26,7 @@ Consolidate the Kuadrant ecosystem into a single operator. The kuadrant-operator
 2. **Removing child operator controllers**: authorino-operator and limitador-operator continue to run as Deployments. Deferred to a follow-on RFC
 3. **Migrating to OLMv1**: all changes run on OLMv0. OLMv1 compatibility is a readiness outcome, not a migration step
 4. **Refactoring component Helm charts**: upstream charts are consumed as-is. Improved templating is future work
+5. **Conditional component deployment**: all components are always deployed. Optional component installation is future work
 
 # Motivation
 [motivation]: #motivation
@@ -36,9 +37,9 @@ OLMv1 [explicitly removes automatic dependency installation](https://github.com/
 
 > OLM v1 will not automatically install a missing dependency when a user requests an operator. The primary reasoning is that OLM v1 will err on the side of predictability and cluster-administrator awareness.
 
-Bundles declaring `olm.package.required`, `olm.gvk.required`, or `olm.constraint` will be rejected under OLMv1. Kuadrant's current model relies entirely on these declarations.
+Bundles declaring `olm.package.required`, `olm.gvk.required`, or `olm.constraint` will be rejected under OLMv1. Kuadrant's current model relies entirely on these declarations. This has been verified on OpenShift CRC: attempting to install the current kuadrant-operator via OLMv1 `ClusterExtension` fails with `bundle has a dependency declared via property "olm.package.required" which is currently not supported`.
 
-The exact process for transitioning a cluster (fully) from OLMv0 to OLMv1 is not yet documented — this is an open question that affects all operators, not just Kuadrant. Currently on OpenShift OLMv1 and OLMv0 run alongside each other. However, regardless of when or how that transition happens, the dependency resolution mechanism Kuadrant relies on will not exist in the future. We should eliminate our dependency declarations now, while still on OLMv0, so that Kuadrant is already compatible when the transition arrives.
+The exact process for transitioning a cluster (fully) from OLMv0 to OLMv1 is not yet documented. Currently on OpenShift OLMv1 and OLMv0 run alongside each other. However, regardless of when or how that transition happens, the dependency resolution mechanism Kuadrant relies on will not exist in the future. We should eliminate our dependency declarations now, while still on OLMv0, so that Kuadrant is already compatible when the transition arrives.
 
 ## Per-component OLM packaging adds overhead within a Kuadrant deployment
 
@@ -54,6 +55,10 @@ Kuadrant's deployment targets are not limited to OpenShift. In the future, we wa
 
 Each independent OLM operator requires its own bundle image, catalog entry, release pipeline, and version coordination. Consolidating into a single OLM package eliminates per-component release overhead while keeping the same controllers and workloads running on the cluster. No CRDs, Deployments, or other resources are removed or deprecated as part of this work.
 
+## Established pattern for OLMv1 readiness
+
+The meta-operator pattern (a parent operator deploying child components at runtime) is the approach highlighted by the OLM team for operators that previously relied on `olm.package.required` dependencies. It is already used in production by Red Hat OpenShift AI ([opendatahub-operator/rhods-operator](https://github.com/opendatahub-io/opendatahub-operator)) for 18+ components, and by the [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator) which manages OLMv1's own sub-components using the same Helm SDK client-only rendering. The approach described in this RFC follows the same pattern, with the only difference being that charts are embedded in the operator image at build time rather than extracted from component images via init containers at runtime.
+
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
@@ -65,7 +70,7 @@ The kuadrant-operator becomes an umbrella operator that deploys component contro
 
 ## After
 
-1 OLM operator (kuadrant-operator) with a single CSV, bundle, and catalog entry. Component controllers (authorino-operator, limitador-operator, dns-operator, mcp-gateway) are no longer OLM packages. They become internal controller deployments whose lifecycle is managed by the kuadrant-operator. No component controller bundles, catalogs, or CSVs need to be maintained.
+1 OLM operator (kuadrant-operator) with a single CSV, bundle, and catalog entry. Component controllers (authorino-operator, limitador-operator, dns-operator, mcp-gateway) are no longer OLM packages. They become internal controller deployments whose lifecycle is managed by the kuadrant-operator at runtime via Helm chart rendering. No component controller bundles, catalogs, or CSVs need to be maintained.
 
 # Reference-level explanation
 [reference-level-explanation]: #reference-level-explanation
@@ -74,90 +79,79 @@ For visual diagrams covering the build-time chart sync, runtime reconciliation c
 
 ## Chart sync process
 
-Component Helm charts are sourced from upstream repos (authorino-operator, limitador-operator, dns-operator, mcp-gateway). A Go sync tool (`hack/sync-child-charts/`) downloads each chart, renders it using the Helm SDK, and classifies the rendered resources by kind. The output is split into three directories:
+Component Helm charts are sourced from upstream repos (authorino-operator, limitador-operator, dns-operator, mcp-gateway). A sync tool downloads each chart as-is and places it in the operator repo:
 
 ```text
-config/child-operators/
-├── crds/                         # Rendered CRDs (one file per component)
-│   ├── authorino-operator.yaml
-│   ├── limitador-operator.yaml
-│   ├── dns-operator.yaml
-│   └── mcp-gateway.yaml
-├── rbac/                         # Rendered ClusterRoles (one file per component)
-│   ├── authorino-operator.yaml
-│   ├── limitador-operator.yaml
-│   ├── dns-operator.yaml
-│   └── mcp-gateway.yaml
-└── charts/                       # Raw chart templates for runtime rendering
-    ├── authorino-operator/
-    ├── limitador-operator/
-    ├── dns-operator/
-    └── mcp-gateway/
+config/child-operators/charts/
+├── authorino-operator/     # Complete upstream chart
+├── limitador-operator/     # Complete upstream chart
+├── dns-operator/           # Complete upstream chart
+└── mcp-gateway/            # Complete upstream chart
 ```
 
-The separation serves a specific purpose:
+Charts are copied as-is from upstream with no rendering, splitting, or modification. The complete chart (Chart.yaml, values.yaml, templates/, crds/) is preserved so the operator can render it at runtime exactly as it would be used in a standalone Helm installation.
 
-- **`crds/` and `rbac/`** contain rendered output (real resource names, no Helm template expressions). These are included in the kuadrant-operator's OLM bundle and Helm chart via kustomize at build time. They are cluster-scoped resources managed by the installation method.
-- **`charts/`** contains the raw Helm chart templates (Chart.yaml, values.yaml, templates/) copied as-is from upstream. These are packaged into the operator container image and rendered at runtime when a Kuadrant CR is created.
-
-The sync tool handles both simple charts (single `manifests.yaml` generated by kustomize) and mature charts with full Helm templating (helpers, conditionals, configurable values). It renders to classify resources but preserves the raw templates for runtime use.
-
-Synced charts are committed to the repo. The sync is run manually via `make sync-child-operator-charts` when updating component versions.
-
-## Kuadrant-operator Helm chart
-
-The kuadrant-operator's own Helm chart (`charts/kuadrant-operator/`) should be updated to follow Helm best practices. Currently, it's a monolithic `manifests.yaml` generated by kustomize with all resources (including CRDs) inline in `templates/`. As part of this work, the chart should be restructured to use Helm's native `crds/` directory for all CRDs (kuadrant and component). This ensures correct install ordering (CRDs installed before templates) and aligns with Helm conventions.
+Synced charts are committed to the repo. The sync is run manually via `make sync-child-operator-charts` when updating component versions. Charts are also packaged into the operator container image for runtime access.
 
 ## Resource ownership
 
-Resource ownership is clearly split between the installation method and the operator:
+All child operator resources are managed by the kuadrant-operator at runtime. The only resources managed by the installer (OLM or Helm) are the kuadrant-operator's own resources:
 
 **Managed by the installer (Helm chart or OLM bundle):**
 
-| Resource | Source | Notes |
-|---|---|---|
-| All CRDs (kuadrant + component) | `config/child-operators/crds/` and `config/crd/` | Installed before the operator starts |
-| Component ClusterRoles | `config/child-operators/rbac/` | Installed before the operator starts |
-| kuadrant-operator Deployment | `config/manager/` | The operator itself |
-| kuadrant-operator ServiceAccount, ClusterRole, ClusterRoleBinding | `config/rbac/` | Operator's own RBAC |
+| Resource | Notes |
+|---|---|
+| kuadrant-operator CRDs | Kuadrant, AuthPolicy, RateLimitPolicy, DNSPolicy, TLSPolicy, TokenRateLimitPolicy |
+| kuadrant-operator Deployment | The operator itself |
+| kuadrant-operator ServiceAccount, ClusterRole, ClusterRoleBinding | Operator's own RBAC |
+
+**Managed by the kuadrant-operator at runtime (on startup):**
+
+| Resource | Notes |
+|---|---|
+| Component CRDs | AuthConfig, Authorino, Limitador, DNSRecord, DNSHealthCheckProbe, MCPGatewayExtension, MCPServerRegistration, MCPVirtualServer |
+| Component ClusterRoles | All child operator ClusterRoles |
+| Component controller Deployments | authorino-operator, limitador-operator, dns-operator, mcp-gateway |
+| Component ServiceAccounts | Per-component identity |
+| Component ClusterRoleBindings | Binds component SAs to component ClusterRoles |
+| Component Roles, RoleBindings | Namespace-scoped RBAC (e.g. leader election) |
+| Component Services, ConfigMaps | Metrics, configuration |
 
 **Managed by the kuadrant-operator at runtime (triggered by Kuadrant CR creation):**
 
 | Resource | Notes |
 |---|---|
-| Component controller Deployments | authorino-operator, limitador-operator, dns-operator, mcp-gateway |
-| Component ServiceAccounts | Per-component identity |
-| Component ClusterRoleBindings | Binds component SAs to pre-installed ClusterRoles using `bind` |
-| Component Roles, RoleBindings | Namespace-scoped RBAC (e.g. leader election) |
-| Component Services, ConfigMaps | Metrics, configuration |
 | Wrapper CRs | Authorino CR, Limitador CR (reconciled by child operators into workloads) |
 
-The operator does not create or modify cluster-scoped resources (CRDs, ClusterRoles) at runtime. If a rendered chart produces a ClusterRole or CRD, the operator skips it with a log warning.
+Child operator CRDs are not included in the OLM bundle. This is a deliberate choice that eliminates GVK conflicts during OLM upgrades from the current multi-operator installation (see [Migration](#migration-from-multi-operator-olm-installation)).
 
 ## Runtime rendering
 
-When a user creates a Kuadrant CR, the kuadrant-operator renders each component controller's Helm chart from `/charts/<name>/` in the container image using the Helm Go SDK (`ClientOnly=true`, `DryRun=true`). The rendered namespaced resources are applied via Server-Side Apply with the kuadrant-operator as the field manager.
+On startup, before the controller manager begins watching resources, the kuadrant-operator renders each component controller's Helm chart from `/charts/<name>/` in the container image using the Helm Go SDK (`ClientOnly=true`, `DryRun=true`). This is the same pattern used by OpenShift's [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator) and [opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator) in production.
 
-Component controllers are deployed into the Kuadrant CR's namespace, not the kuadrant-operator's namespace. This is a change from the current model where all child operators run in `kuadrant-system` regardless of the Kuadrant CR's location. This approach moves towards supporting future multi-tenanted control plane scenarios.
+Charts are rendered and applied following Helm's install ordering (CRDs first, then dependent resources). All child operator resources must be established before the controller manager starts watching for CRDs.
 
-All component controller Deployments are owned by the Kuadrant CR via ownerReference. This includes dns-operator, which previously ran independently and did not require a Kuadrant CR.
+Component controllers are deployed into the kuadrant-operator's namespace (e.g. `kuadrant-system`). They are control plane singletons, one instance per cluster, not per Kuadrant CR. This matches the current model where OLM deploys all child operators into the same namespace.
 
-Observability (metrics collection, ServiceMonitors, log aggregation) must account for component controllers running in the Kuadrant CR's namespace rather than a fixed operator namespace.
+Component controller Deployments are not owned by the Kuadrant CR. They run independently of whether a Kuadrant CR exists. The Kuadrant CR only triggers data plane resources (wrapper CRs, policies).
 
 ## RBAC
 
-The kuadrant-operator does not need to duplicate component controller permissions. The Kubernetes `bind` verb allows creating ClusterRoleBindings to named ClusterRoles without holding all their permissions. The operator's ClusterRole includes `bind` on each component's ClusterRole `resourceNames`. No `escalate` is needed since the operator does not modify ClusterRole rules at runtime; ClusterRoles are pre-installed by the installer (Helm or OLM bundle).
+The kuadrant-operator requires permissions to create and manage all child operator resources at runtime:
 
-Only ClusterRole names need tracking, not their contents. When a component controller changes its RBAC rules, no kuadrant-operator change is needed unless a ClusterRole is added or renamed.
+- **`apiextensions.k8s.io` CRDs**: unscoped `create` (required because the resource may not exist yet), plus `get`, `list`, `watch`, `update`, `patch` scoped to specific child CRD names via `resourceNames`. This ensures the operator can only modify CRDs it manages while limiting the broad permission to `create` only
+- **`rbac.authorization.k8s.io` ClusterRoles**: unscoped `create` (same reason as CRDs), plus `get`, `list`, `watch`, `update`, `patch`, `bind`, `escalate` scoped to specific child ClusterRole names via `resourceNames`
+- **`rbac.authorization.k8s.io` ClusterRoleBindings, Roles, RoleBindings**: standard CRUD to bind component SAs to their ClusterRoles
+- **`apps` Deployments, core resources**: standard CRUD for component controllers
 
-Component ClusterRoles must use fixed, predictable names. The `bind` permissions use `resourceNames`, so the operator must know the exact names at build time. Charts that derive ClusterRole names from the Helm release name (e.g. via the `fullname` helper) create a fragile dependency that can silently break the RBAC contract. The sync tool validates rendered ClusterRole names at sync time, catching any mismatches before they reach a cluster.
+The `escalate` verb on ClusterRoles is required because child operator ClusterRoles grant permissions (e.g. access to AuthConfig resources) that the kuadrant-operator itself does not hold. Without `escalate`, Kubernetes RBAC prevents creating a ClusterRole with rules the creator doesn't already have. The `bind` verb on ClusterRoles is also required because the charts render ClusterRoleBindings that reference those ClusterRoles. Without `bind`, Kubernetes RBAC prevents creating a binding to a ClusterRole whose permissions you don't hold.
 
 ## Two supported installation methods
 
-- **Helm**: Single `helm install` deploys everything. The kuadrant-operator Helm chart includes all CRDs (kuadrant and component) in its `crds/` directory following Helm best practices, and component ClusterRoles in `templates/`. CRDs and ClusterRoles are generated at `make helm-build` time from `config/child-operators/crds/` and `config/child-operators/rbac/` via kustomize.
-- **OLM**: Single operator in the catalog. The bundle includes all component CRDs and ClusterRoles (from `config/child-operators/` via `config/manifests/kustomization.yaml`). No component controller bundles in the catalog.
+- **Helm**: Single `helm install` deploys the kuadrant-operator and its own CRDs. The operator starts and deploys all child operator resources (CRDs, ClusterRoles, controllers) at runtime from embedded charts.
+- **OLM**: Single operator in the catalog. The bundle contains only the kuadrant-operator's own CRDs and Deployment. No child operator CRDs or ClusterRoles in the bundle. The operator deploys them at runtime, same as the Helm path.
 
-Both paths produce the same cluster state: CRDs and ClusterRoles installed, kuadrant-operator running, no component controllers until a Kuadrant CR is created.
+Both paths produce the same cluster state: kuadrant-operator running, child operator CRDs established, all component controllers deployed and running. Child operator resources are managed by the operator at runtime identically in both paths.
 
 ## Image references
 
@@ -172,35 +166,26 @@ OLM convention requires all container images to be declared in the CSV's `relate
 | `RELATED_IMAGE_DNS_OPERATOR` | `quay.io/kuadrant/dns-operator:latest` | DNS operator controller |
 | `RELATED_IMAGE_MCP_GATEWAY` | `ghcr.io/kuadrant/mcp-controller:latest` | MCP Gateway controller |
 
-These are declared as environment variables on the kuadrant-operator Deployment (`config/manager/manager.yaml`). The downstream build system overrides them with version-pinned or mirrored image references. The Helm reconcilers read these env vars and apply the correct images when rendering child operator charts, either by patching the rendered Deployment image directly (for simple charts that don't support values-based overrides) or by passing Helm values (for charts with configurable image fields).
+These are declared as environment variables on the kuadrant-operator Deployment (`config/manager/manager.yaml`). The downstream build system overrides them with version-pinned or mirrored image references. The Helm rendering reads these env vars and applies the correct images when rendering child operator charts, either by patching the rendered Deployment image directly (for simple charts that don't support values-based overrides) or by passing Helm values (for charts with configurable image fields).
 
 ## Wrapper CRs preserved
 
-Authorino CR and Limitador CR are still created by kuadrant-operator. Component controllers reconcile these wrapper CRs to create workloads. No change to this flow. Users see no difference in behaviour.
-
-## Kuadrant CR deletion must manage component lifecycle
-
-Component controller Deployments are owned by the Kuadrant CR via ownerReference. Several CRDs use finalizers that require their controller to be running:
-
-- Authorino CR has finalizer `authorino.kuadrant.io/finalizer`
-- DNSRecord CRs have finalizers for cleaning up external DNS provider records
-
-If the Kuadrant CR is deleted and the cascade deletes the controllers simultaneously, CRs with finalizers will be stuck in `Terminating` state. The kuadrant-operator must have a finalizer on the Kuadrant CR that enforces correct deletion order: ensure all controller-dependent resources with finalizers (wrapper CRs, DNSRecords, and any others) have completed their finalizer logic before allowing the cascade to remove component controller Deployments.
+Authorino CR and Limitador CR are still created by kuadrant-operator when a Kuadrant CR is created. Component controllers reconcile these wrapper CRs to create workloads. No change to this flow. Users see no difference in behaviour.
 
 ## OLM bundle and catalog
 
-The bundle/catalog pipeline deals with a single package (kuadrant-operator). Component controller bundle images, catalog channel entries, and dependency injection are removed. Component CRDs and ClusterRoles are included in the kuadrant-operator bundle directly from `config/child-operators/`. All component CRDs are declared as `owned` in the CSV, making kuadrant-operator the sole OLM owner. This requires a pre-upgrade cleanup step for existing multi-operator installations (see [Migration](#migration-from-multi-operator-olm-installation)).
+The bundle/catalog pipeline deals with a single package (kuadrant-operator). Component controller bundle images, catalog channel entries, and dependency injection are removed. The bundle contains only the kuadrant-operator's own CRDs and resources. Child operator CRDs are not included in the bundle; they are applied at runtime by the operator. This eliminates OLM GVK conflicts during upgrades from the current multi-operator installation.
 
 ## Component repos
 
-No changes are required in component repos for the consolidation to work. The sync tool will be designed to handle any chart structure.
+No changes are required in component repos for the consolidation to work. The sync tool downloads charts as-is.
 
 However, some upstream chart changes would be beneficial:
 
-- **CRDs directory**: charts that keep CRDs in `templates/` rather than the native Helm `crds/` directory could benefit from separating them, making the sync tool's job cleaner
 - **Consistent labels**: applying consistent labels across all component resources (e.g. `kuadrant.io/component`) would improve topology tracking and filtering. Currently, the Authorino Deployment lacks distinguishing labels, preventing it from being tracked in the kuadrant-operator topology
 - **Unique Deployment selectors**: the limitador-operator chart uses a generic `control-plane: controller-manager` selector that collides with the kuadrant-operator in the same namespace. This is a pre-existing bug that needs fixing upstream
 - **Fixed ClusterRole names**: charts using Helm's `fullname` helper for ClusterRole names create a fragile dependency on the release name. ClusterRoles are cluster-scoped permission definitions and should use fixed names
+- **Graceful CRD handling**: component controllers should handle missing CRDs gracefully (e.g. mcp-gateway currently crashes if Istio EnvoyFilter CRD is not installed)
 
 Since component repos no longer need to produce their own OLM bundles or catalogs, OLM-specific artefacts can also be removed to reduce maintenance burden: `bundle/`, `catalog/`, `config/manifests/`, `config/deploy/olm/`, `config/scorecard/`, `bundle.Dockerfile`, `operator-sdk` and `opm` tool dependencies.
 
@@ -216,100 +201,21 @@ Changes to the release process and version pinning strategy are out of scope for
 
 ## Migration from multi-operator OLM installation
 
-### The problem: OLM GVK conflict
+### How it works
 
-OLM's dependency resolver prevents two CSVs from providing the same GVK (Group-Version-Kind) within a namespace. When the consolidated kuadrant-operator bundle declares child CRDs (AuthConfig, Limitador, DNSRecord, etc.) as `owned`, the resolver sees a conflict with the still-installed child operator CSVs that also own those GVKs.
+Since child operator CRDs are not included in the OLM bundle, there are no GVK conflicts between the consolidated kuadrant-operator and the existing child operator CSVs. The OLM upgrade proceeds without stalling.
 
-This conflict manifests as a `ConstraintsNotSatisfiable` condition on the Subscription:
+On startup, the upgraded kuadrant-operator:
 
-```
-constraints not satisfiable: kuadrant-operator.v0.0.1 and dns-operator.v0.0.0
-provide DNSHealthCheckProbe (kuadrant.io/v1alpha1)
-```
+1. Applies child operator CRDs (which already exist from the previous installation)
+2. Deploys child operator controllers from embedded Helm charts
+3. Detects and removes orphaned child operator Subscriptions and CSVs programmatically
 
-The GVK properties are baked into the bundle by `opm render` from any CRDs present in the bundle image. They cannot be removed from the CSV `owned` list without also removing the CRDs from the bundle, and they cannot be removed from the `olm.gvk` catalog properties at all since `opm` generates them from the bundle content.
+The data plane (Authorino server, Limitador server) is unaffected throughout. Verified on OpenShift CRC: deleting child operator CSVs removes their controller Deployments but does not cascade-delete CRDs, ClusterRoles, or data plane workloads. The consolidated operator's child controllers take over seamlessly.
 
-The upgrade stalls safely: the existing deployment continues running, no data is lost, and the user has time to resolve the conflict.
+### OLMv1 compatibility
 
-### Chosen approach: documented migration cleanup
-
-The consolidated bundle declares all child CRDs as `owned`. The OLM upgrade stalls until the user removes the existing child operator Subscriptions and CSVs that conflict. This is a one-time migration step.
-
-In practice, the catalog update happens first (either pushed by an administrator or picked up automatically by OLM's catalog polling). The upgrade stalls safely, and the user then performs the cleanup to unblock it. For users who want full control over timing, setting `installPlanApproval: Manual` on the Subscription before the catalog update is recommended.
-
-**Migration steps:**
-
-```bash
-# 1. (Recommended) Set manual approval to control upgrade timing
-kubectl patch subscription kuadrant -n kuadrant-system \
-  --type=merge -p '{"spec":{"installPlanApproval":"Manual"}}'
-
-# 2. Remove child operator subscriptions (and mcp-gateway if installed standalone)
-kubectl delete subscription -n kuadrant-system \
-  authorino-operator-preview-kuadrant-operator-catalog-kuadrant-system \
-  dns-operator-preview-kuadrant-operator-catalog-kuadrant-system \
-  limitador-operator-preview-kuadrant-operator-catalog-kuadrant-system
-# If mcp-gateway was installed standalone:
-# kubectl delete subscription -n <namespace> <mcp-gateway-subscription-name>
-
-# 3. Remove child operator CSVs (and mcp-gateway if installed standalone)
-kubectl delete csv -n kuadrant-system \
-  authorino-operator.v0.0.0 \
-  dns-operator.v0.0.0 \
-  limitador-operator.v0.0.0
-# If mcp-gateway was installed standalone:
-# kubectl delete csv -n <namespace> <mcp-gateway-csv-name>
-
-# 4. If using manual approval, approve the install plan
-kubectl get installplan -n kuadrant-system
-kubectl patch installplan <name> -n kuadrant-system \
-  --type=merge -p '{"spec":{"approved":true}}'
-```
-
-**Tested behaviour** (verified on OpenShift CRC):
-
-1. Deleting child operator CSVs does **not** cascade-delete their CRDs. OLM tracks CRD ownership via labels (`operators.coreos.com/<operator>.<namespace>`) and annotations, not via Kubernetes ownerReferences. CRDs are cluster-scoped and CSVs are namespace-scoped, so Kubernetes cross-scope garbage collection does not apply.
-2. Deleting child CSVs **does** remove their managed Deployments (the child operator controllers stop).
-3. After cleanup, OLM resolves the upgrade and installs the consolidated bundle. The bundle re-installs all CRDs (updating them if schemas changed) and the kuadrant-operator deploys child controllers via Helm rendering.
-4. With automatic upgrades, the upgrade stalls with `ResolutionFailed` until the cleanup is performed. The existing deployment continues running with no data loss. Once the user performs the cleanup, the next resolver cycle (every few seconds) succeeds.
-
-The `ResolutionFailed` condition message clearly identifies the GVK conflict, making it straightforward to diagnose and point users at the migration documentation.
-
-### Alternatives considered for migration
-
-#### Transition release with runtime CRD management
-
-A stepping-stone release where the bundle contains no child CRDs. The operator applies CRDs at runtime, removes child subscriptions/CSVs programmatically, and sets OLM ownership labels. The next release then includes child CRDs as `owned` in the bundle.
-
-**Rejected because:**
-- Requires granting the operator `apiextensions.k8s.io` permissions to create/update CRDs. The `create` verb cannot be scoped by `resourceNames` (the resource doesn't exist yet), so it grants broad CRD creation ability.
-- Creates a window where child CRDs are unmanaged by OLM. No CSV declares them as `owned`, so OLM provides no protection against another operator claiming those GVKs.
-- Adds a release that exists solely for migration mechanics, increasing complexity.
-- The two-phase approach (transition + final) doubles the migration testing surface.
-
-#### Stripping child CRDs from CSV owned list
-
-Keep child CRDs in the bundle but remove them from the CSV's `spec.customresourcedefinitions.owned` list in a post-generation step. This avoids the GVK conflict at the CSV level.
-
-**Rejected because:**
-- `opm render` generates `olm.gvk` properties from CRDs present in the bundle image, regardless of what the CSV declares. The resolver uses these properties, not the CSV's `owned` list. Even with child CRDs stripped from `owned`, the resolver still sees the GVK conflict.
-- `operator-sdk bundle validate` rejects bundles where CRDs are present but not declared in the CSV. While validation can be skipped, it indicates the bundle is in an unsupported state.
-
-#### New API versions for child CRDs
-
-Introduce new API versions (e.g. `v1alpha2`) for child CRDs to avoid GVK overlap with existing child operator CSVs.
-
-**Rejected because:**
-- CRDs must still serve existing versions for backwards compatibility. A CRD serving both `v1alpha1` and `v1alpha2` still provides the `v1alpha1` GVK, which conflicts with the child CSV.
-- Creating new API versions purely for migration mechanics adds permanent API surface area for a transient problem.
-- Does not address the child subscription constraint (subscriptions pin child CSVs regardless of GVK overlap).
-
-### Other migration considerations
-
-- **Data plane continuity**: wrapper CRs (Authorino CR, Limitador CR) and their workloads are preserved throughout migration. Deleting child CSVs removes operator controllers but does not affect running workloads (Authorino server, Limitador server).
-- **Control plane gap**: between deleting child CSVs (which removes child controllers) and the consolidated operator starting (which redeploys them via Helm), there is a brief window where child controllers are not running. During this window, changes to wrapper CRs or child CRDs are not reconciled. Existing workloads continue running.
-- **Resource naming consistency**: resource names produced by the chart rendering should match names currently used by OLM-installed operators to avoid orphaned resources.
-- **Consistent labelling**: the umbrella operator can apply consistent labels to all managed resources, addressing existing gaps (e.g. Authorino Deployment lacks distinguishing labels for topology tracking).
+The consolidated bundle has been tested with OLMv1 `ClusterExtension` on OpenShift CRC and installs successfully. No dependency declarations, no GVK conflicts. This is in contrast to the current multi-operator bundle which is explicitly rejected by OLMv1: `bundle has a dependency declared via property "olm.package.required" which is currently not supported`.
 
 ### Upgrade testing
 
@@ -317,13 +223,11 @@ Automated upgrade tests must be established to validate the migration path from 
 
 - Start with the previous release installed via OLM (all 4 operators with their CSVs)
 - Create a Kuadrant CR with active policies and ingress traffic
-- Perform pre-upgrade cleanup (remove child subscriptions and CSVs)
 - Upgrade to the consolidated release via OLM catalog channel
+- Verify child operator Subscriptions and CSVs are cleaned up by the operator
 - Verify all child CRDs survived the migration
-- Verify kuadrant-operator CSV declares ownership of all CRDs
 - Verify all component controllers are running (now managed by kuadrant-operator)
 - Verify zero data plane disruption throughout (policies continue to be enforced, no traffic loss)
-- Verify CRD schema changes are applied correctly when present
 
 These tests should run in CI for every release and serve as ongoing regression testing for the OLM upgrade path.
 
@@ -333,16 +237,18 @@ These tests should run in CI for every release and serve as ongoing regression t
 This RFC deliberately preserves wrapper CRs and child operator controllers. A follow-on RFC should address further architectural simplification:
 
 - **Removing intermediate operator layers and wrapper CRs**: deploying Authorino and Limitador workloads directly from the kuadrant-operator, eliminating authorino-operator and limitador-operator as running controllers. This removes the `Authorino` and `Limitador` CRDs from the user-facing API surface. Each operator removed is a separate container image with its own Go dependency tree. Every transitive dependency is a potential CVE that needs scanning, patching, and releasing. Removing these controllers reduces the security surface area and maintenance burden.
+- **Control plane status CR**: a new cluster-scoped CR (e.g. `KuadrantControlPlane` or `KuadrantPlatform`, separate from the Kuadrant CR) for reporting child operator health and eventually enabling conditional component deployment. The operator would auto-create a default on startup. This separates control plane management (which components are deployed, their health) from data plane management (the Kuadrant CR, policies, workloads). This is the same pattern used by RHOAI/RHODS, where `DSCInitialization` handles platform setup and `DataScienceCluster` controls component lifecycle.
+- **Conditional component deployment**: using the control plane CR to allow operators to be selectively enabled or disabled, avoiding deploying components that are not needed (e.g. mcp-gateway on clusters without Istio).
 - **Extracting a dedicated policy controller**: separating policy reconciliation (AuthPolicy, RateLimitPolicy, DNSPolicy, TLSPolicy) from the kuadrant-operator into a `kuadrant-policy-controller` deployed as a component, making the kuadrant-operator purely an orchestration layer.
-- **Selective component installation**: adding `spec.components` to the Kuadrant CRD for user-facing control over which components are deployed.
 - **Kuadrant CR evolution**: exposing day 2 configuration (replicas, resources, storage backend) through the Kuadrant CR.
 
 # Drawbacks
 [drawbacks]: #drawbacks
 
-- **Broader RBAC for kuadrant-operator**: the kuadrant-operator now needs permissions to manage Deployments, Services, RBAC, and ConfigMaps for all component controllers, plus `bind` on their ClusterRoles.
+- **Broader RBAC for kuadrant-operator**: the kuadrant-operator needs an unscoped `create` on `apiextensions.k8s.io` CRDs (scoped `create` is not possible in Kubernetes RBAC since the resource does not exist yet) and `escalate` on ClusterRoles. All other CRD verbs (`get`, `update`, `patch`) are scoped to specific child CRD names. These permissions follow the same pattern used by the OpenShift [opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator) and [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator) in production.
 - **Chart sync maintenance**: component controller charts must be kept in sync. Automated dependency sync (via GitHub dispatch) mitigates this but adds CI complexity.
-- **Finalizer ordering**: the Kuadrant CR must manage deletion order to prevent wrapper CR finalizers from being orphaned. This adds reconciliation complexity.
+- **No OLM CRD protection**: OLM does not know about child operator CRDs, so it cannot prevent another OLM-managed operator from claiming the same GVKs. In practice, this is a narrow risk: it requires installing a standalone child operator via OLM alongside kuadrant, which is a user error. It is worth noting that OLM's GVK protection only prevents conflicts between OLM-managed packages. It does nothing to prevent a Helm chart or raw manifest from altering or replacing a CRD on the cluster.
+- **Startup failure is fatal**: if a child operator chart is malformed or the cluster rejects a resource, the kuadrant-operator will not start. This is a feature, not a bug: it prevents partially-upgraded states where some components are on the new version and others are not. The previous operator pod continues running until the new one is healthy (Deployment rollout strategy).
 
 # Rationale and alternatives
 [rationale-and-alternatives]: #rationale-and-alternatives
@@ -351,11 +257,35 @@ This RFC deliberately preserves wrapper CRs and child operator controllers. A fo
 
 - **No new operator**: the kuadrant-operator itself becomes the umbrella operator, avoiding a new codebase, image, CI pipeline, and release process.
 - **No breaking changes**: wrapper CRs are preserved. Wrapper CR removal is deferred to a follow-on RFC when it can be properly investigated and tested.
-- **Helm as first-class citizen**: both installation paths (direct Helm and OLM) consume the same charts, unifying upstream and downstream experiences.
+- **Helm as first-class citizen**: both installation paths (direct Helm and OLM) use the same charts. The kuadrant-operator Helm chart is fully visible to Helm for its own resources. Child operator resources are rendered from the same upstream charts in both paths.
+- **No OLM migration friction**: child operator CRDs are not in the bundle, so OLM GVK conflicts do not occur. The upgrade proceeds automatically and the operator handles cleanup of orphaned child Subscriptions/CSVs.
+- **OLMv1 ready**: verified working with OLMv1 `ClusterExtension` on OpenShift CRC. No dependency declarations, no GVK conflicts.
 - **Reduced operator footprint**: the OLM catalog goes from 4 packages to 1. Component repos can remove all OLM-specific artefacts.
-- **Proven pattern**: OpenShift's [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator) uses Helm client-only rendering in production.
+- **Proven pattern**: OpenShift's [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator) uses identical Helm SDK client-only rendering (`ClientOnly=true`, `DryRun=true`, `action.NewInstall`) to deploy sub-components in production. The [opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator) uses a similar manifest-based approach for 18+ components.
+- **Path to further simplification**: the runtime rendering infrastructure enables future conditional component deployment and will be reused when child operators are flattened (deploying Authorino/Limitador workloads directly from their Helm charts).
 
 ## Alternatives considered
+
+#### Installer-managed CRDs and ClusterRoles (split chart approach)
+
+The chart sync tool renders each upstream chart, classifies resources by kind, and splits them into separate directories: `crds/` and `rbac/` for installer-managed resources, `charts/` for runtime rendering. CRDs and ClusterRoles are included in the OLM bundle and Helm chart at build time. The operator only renders namespaced resources (Deployments, SAs, etc.) at runtime, skipping CRDs and ClusterRoles.
+
+**Rejected because:**
+- Including child CRDs in the OLM bundle causes GVK conflicts during upgrades from the current multi-operator installation. `opm render` bakes `olm.gvk` properties from any CRDs in the bundle image, and the resolver blocks the upgrade when those GVKs are already provided by existing child operator CSVs. OLM provides no visible error when the upgrade is blocked; the subscription silently stays at `AtLatestKnown` with no indication that an upgrade is available but stalled.
+- Splits the chart into installer-managed and runtime-managed resources, diverging from how the chart would be used in a standalone Helm installation. This creates two different deployment models for the same component.
+- For the Helm install path, CRDs and ClusterRoles must be extracted into the kuadrant-operator Helm chart at build time while the operator renders the rest at runtime. Helm has no visibility of the runtime-managed resources.
+- Tightly couples the sync tool to chart internals. The tool must render and classify resources by kind, and changes to chart structure can silently produce incorrect classification.
+- No path to conditional component deployment. CRDs and ClusterRoles are installed at install time regardless of whether the component is needed.
+
+#### Consolidated CSV (large CSV approach)
+
+All child operator resources (CRDs, ClusterRoles, Deployments, SAs, RBAC) included directly in the kuadrant-operator CSV as static manifests. No runtime rendering. OLM and Helm both deploy the complete set of resources at install time. The existing `config/dependencies/` kustomize references are wired into the bundle and Helm chart build paths.
+
+**Rejected because:**
+- Same OLM GVK conflict as the split chart approach: child CRDs in the bundle cause `opm render` to bake GVK properties that conflict with existing child operator CSVs, blocking upgrades.
+- For the Helm install path, child operator resources need to be duplicated or the Helm chart needs to pull from the same kustomize source as the bundle, coupling the two paths and producing the same cluster state through different mechanisms.
+- All components always deployed with no path to conditional installation. Components that depend on cluster prerequisites (e.g. mcp-gateway requires Istio) cannot be excluded.
+- Does not establish the runtime rendering infrastructure needed for future work (flattening child operators, deploying data plane workloads directly from their Helm charts).
 
 #### New umbrella operator (separate from kuadrant-operator)
 
@@ -366,24 +296,16 @@ A separate operator that coordinates deployment while kuadrant-operator handles 
 - Two operators to debug (deployment issues vs policy issues).
 - The kuadrant-operator already has the Kuadrant CR watch, the topology, and the workflow infrastructure. Adding Helm rendering to it is simpler than building a new operator that needs all the same context.
 
-#### New umbrella operator with kuadrant-operator as policy controller
+#### Operator-managed Subscriptions
 
-Introduce a new umbrella operator for deployment orchestration. The existing kuadrant-operator becomes a pure policy controller deployed as a component, and the new operator takes ownership of the Kuadrant CR.
-
-**Rejected because:**
-- Introduces a new codebase, image, CI pipeline, and release process.
-- The kuadrant-operator already has the Kuadrant CR watch, the topology, and the workflow infrastructure. Adding Helm rendering to it is simpler than building a new operator that needs all the same context.
-- Two operators to debug (deployment issues vs policy issues).
-- Splitting policy reconciliation out of the kuadrant-operator can still be done as a future phase if needed, without requiring a new operator to be built first.
-
-#### Large CSV
-
-A single OLM bundle containing all existing operators in one CSV with zero dependency declarations.
+The kuadrant-operator creates OLM Subscription resources for each child operator at runtime, either programmatically or via resources included in the bundle. OLM then installs the child operators from the catalog as it does today, but triggered by the operator rather than by `dependencies.yaml`.
 
 **Rejected because:**
-- Dependency operators are retained. Their maintenance cost, security surface area, and release complexity remain.
-- OLM owns all Deployments in the CSV and reconciles them back to the declared state. Users cannot scale replicas or adjust resources without rebuilding the bundle.
-- Does not put Helm at the centre of installation.
+- `Subscription` is an OLMv0 resource that is replaced by `ClusterExtension` in OLMv1. The operator would need to handle both APIs or be rewritten when OLMv1 becomes the default.
+- Only works on clusters with OLM installed. For Helm installs on vanilla Kubernetes (EKS, GKE, AKS), child operators are installed via Helm chart dependencies. This means two completely separate code paths for deploying the same components, and the operator would need to detect which mechanism is in use.
+- Child operator bundles, catalogs, and release pipelines all remain. The only thing removed is `dependencies.yaml`, so the per-component release overhead is unchanged.
+- Still results in multiple CSVs and Subscriptions on the cluster, with no single view of product health.
+- While simpler as a first step, it does not contribute to the longer-term goal of consolidating operators. The Subscription management code would be discarded when child operators are eventually absorbed into kuadrant-operator.
 
 #### Manual installation of dependencies
 
@@ -397,7 +319,9 @@ Each component published as its own independent OLM package with no dependency d
 # Prior art
 [prior-art]: #prior-art
 
-- **[cluster-olm-operator](https://github.com/openshift/cluster-olm-operator)**: manages OLMv1 sub-components using Helm charts rendered client-only.
+- **[cluster-olm-operator](https://github.com/openshift/cluster-olm-operator)**: manages OLMv1 sub-components using Helm charts rendered client-only. Uses init containers to extract charts from component images at pod startup, renders with the same Helm SDK pattern (`ClientOnly=true`, `DryRun=true`, `action.NewInstall`). Our approach embeds charts at build time instead, but the runtime rendering is identical. Deployed in production OpenShift.
+- **[opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator)** (downstream: [rhods-operator](https://github.com/red-hat-data-services/rhods-operator), Red Hat OpenShift AI): manages 18+ component controllers via manifests fetched from upstream repos at build time and applied at runtime. Uses `DataScienceCluster` CR with `managementState` per component for conditional deployment. Highlighted by the OLM team as a reference implementation for operators that need other operators present on the cluster without using OLM dependency declarations.
+- **[OpenShift Ingress Operator](https://github.com/openshift/cluster-ingress-operator)**: deploys Istio control plane (including CRDs like EnvoyFilter) at runtime triggered by a GatewayClass CR. Another example of a core OpenShift operator managing CRDs and controllers at runtime without OLM involvement.
 - **[OLMv0 dependency resolution](https://olm.operatorframework.io/docs/concepts/olm-architecture/dependency-resolution/)**: the current model being replaced.
 - **[OLMv1 design decisions](https://github.com/operator-framework/operator-controller/blob/main/docs/project/olmv1_design_decisions.md)**: documents why dependency resolution was removed.
 
@@ -406,6 +330,8 @@ Each component published as its own independent OLM package with no dependency d
 
 - **OLMv0 to OLMv1 cluster transition**: the exact process for migrating a cluster from OLMv0 to OLMv1 is not documented. The umbrella operator approach ensures Kuadrant is ready regardless of how this transition works.
 
-- **CRD ownership conflicts with standalone installations**: if standalone Authorino is already installed on a cluster, the kuadrant-operator's bundle includes Authorino CRDs. Under OLMv1's single-ownership model, two bundles cannot own the same CRDs. This is the same GVK conflict pattern as the migration scenario, and would require the standalone operator to be removed first.
+- **CRD ownership conflicts with standalone installations**: if standalone Authorino is already installed on a cluster, the kuadrant-operator will apply the same CRDs via SSA with `Force: true`, potentially overwriting the standalone version. This is a user error scenario (installing two things that manage the same CRDs) but could cause unexpected behaviour if the versions differ.
 
 - **Wrapper CR removal timeline**: this RFC preserves wrapper CRs. The timeline and approach for removing them depends on how much the Authorino and Limitador CRs are used for direct user customisation vs being purely internal. This will be addressed in a follow-on RFC.
+
+- **Control plane status and configuration CR**: the RFC identifies the need for a new CR to report child operator health and eventually enable conditional deployment, but the design of this CR is deferred to implementation.

@@ -4,11 +4,12 @@
 
 | Term | Meaning |
 |------|---------|
-| **SSA** | Server-Side Apply — Kubernetes apply method where the server tracks field ownership per manager |
+| **SSA** | Server-Side Apply, the Kubernetes apply method where the server tracks field ownership per manager |
 | **CRB** | ClusterRoleBinding |
 | **SA** | ServiceAccount |
 | **CRD** | CustomResourceDefinition |
-| **bind** | RBAC verb that allows creating ClusterRoleBindings to named ClusterRoles without holding all their permissions |
+| **escalate** | RBAC verb that allows creating ClusterRoles with permissions the creator does not hold |
+| **bind** | RBAC verb that allows creating ClusterRoleBindings to ClusterRoles whose permissions the creator does not hold |
 | **GITREF** | Git reference (branch, tag, or SHA) used to pull charts from upstream repos |
 | **Wrapper CR** | Authorino/Limitador custom resources created by kuadrant-operator and reconciled by child operators |
 
@@ -23,63 +24,49 @@ graph LR
         MG["Kuadrant/mcp-gateway"]
     end
 
-    SYNC["make sync-child-operator-charts<br/>Go tool: hack/sync-child-charts/"]
+    SYNC["make sync-child-operator-charts"]
 
     AO -->|GITREF| SYNC
     LO -->|GITREF| SYNC
     DO -->|GITREF| SYNC
     MG -->|GITREF| SYNC
 
-    subgraph local["config/child-operators/"]
-        subgraph crds["crds/"]
-            ao_c["authorino-operator.yaml"]
-            lo_c["limitador-operator.yaml"]
-            do_c["dns-operator.yaml"]
-            mg_c["mcp-gateway.yaml"]
-        end
-        subgraph rbac["rbac/"]
-            ao_r["authorino-operator.yaml"]
-            lo_r["limitador-operator.yaml"]
-            do_r["dns-operator.yaml"]
-            mg_r["mcp-gateway.yaml"]
-        end
-        subgraph charts["charts/"]
-            ao_t["authorino-operator/"]
-            lo_t["limitador-operator/"]
-            do_t["dns-operator/"]
-            mg_t["mcp-gateway/"]
-        end
+    subgraph local["config/child-operators/charts/"]
+        ao_t["authorino-operator/"]
+        lo_t["limitador-operator/"]
+        do_t["dns-operator/"]
+        mg_t["mcp-gateway/"]
     end
 
-    SYNC --> crds
-    SYNC --> rbac
-    SYNC --> charts
+    SYNC -->|"copies chart as-is"| local
 ```
+
+Charts are copied unmodified from upstream repos. No rendering, splitting, or classification at sync time. Each chart directory contains the complete upstream chart (Chart.yaml, values.yaml, templates/, crds/).
 
 ```mermaid
 graph LR
-    subgraph local["config/child-operators/"]
-        CRDs["crds/"]
-        RBAC["rbac/"]
-        CHARTS["charts/"]
+    subgraph local["config/child-operators/charts/"]
+        CHARTS["Complete upstream charts"]
     end
 
-    CRDs -->|"make bundle"| BUNDLE["OLM Bundle"]
-    RBAC -->|"make bundle"| BUNDLE
-    CRDs -->|"make helm-build"| HELM["Helm Chart"]
-    RBAC -->|"make helm-build"| HELM
-    CHARTS -->|"copied to /charts/<br/>in container image"| RUNTIME["Helm renderer<br/>in operator"]
+    CHARTS -->|"COPY in Dockerfile"| IMAGE["Operator container image<br/>/charts/"]
 ```
 
-## Cluster State After Installation (no Kuadrant CR)
+The kuadrant-operator OLM bundle and Helm chart contain only the kuadrant-operator's own resources (CRDs, Deployment, RBAC). Child operator resources are not included in the bundle or Helm chart.
+
+## Cluster State After Installation (before Kuadrant CR)
 
 ```mermaid
 graph TB
-    subgraph operator["1 Operator Deployment"]
+    subgraph operator-ns["Operator namespace (e.g. kuadrant-system)"]
         KOP["kuadrant-operator"]
+        AO["authorino-operator"]
+        LO["limitador-operator"]
+        DO["dns-operator"]
+        MG["mcp-gateway controller"]
     end
 
-    subgraph crds["CRDs (all installed by kuadrant-operator bundle/chart)"]
+    subgraph crds["CRDs"]
         K_CRD["Kuadrant, AuthPolicy<br/>RateLimitPolicy, DNSPolicy<br/>TLSPolicy"]
         A_CRD["Authorino, AuthConfig"]
         L_CRD["Limitador"]
@@ -87,13 +74,23 @@ graph TB
         M_CRD["MCPGatewayExtension<br/>MCPServerRegistration<br/>MCPVirtualServer"]
     end
 
-    subgraph rbac["RBAC"]
-        K_RBAC["kuadrant-operator<br/>SA + ClusterRole + CRB"]
-        CHILD_CR["Child operator ClusterRoles<br/>(no SA or CRB yet)"]
+    subgraph installed-by["Installed by"]
+        INSTALLER["Helm or OLM"] -.-> K_CRD
+        INSTALLER -.-> KOP
+        KOP -->|"renders charts<br/>at startup"| AO
+        KOP -->|"renders charts<br/>at startup"| LO
+        KOP -->|"renders charts<br/>at startup"| DO
+        KOP -->|"renders charts<br/>at startup"| MG
+        KOP -->|"applies CRDs<br/>at startup"| A_CRD
+        KOP -->|"applies CRDs<br/>at startup"| L_CRD
+        KOP -->|"applies CRDs<br/>at startup"| D_CRD
+        KOP -->|"applies CRDs<br/>at startup"| M_CRD
     end
 
-    KOP -.->|"waiting for<br/>Kuadrant CR"| IDLE["No child operators running<br/>until user creates Kuadrant CR"]
+    KOP -.->|"waiting for<br/>Kuadrant CR"| IDLE["No data plane workloads yet<br/>Child controllers already running"]
 ```
+
+All child operator controllers, CRDs, and ClusterRoles are deployed at operator startup before the controller manager begins watching resources. No Kuadrant CR is needed for the control plane to be running.
 
 ## Runtime: Reconciliation Chain
 
@@ -104,15 +101,15 @@ graph TB
 
     subgraph operator-ns["Operator namespace (e.g. kuadrant-system)"]
         KOP["kuadrant-operator"]
+        AO["authorino-operator"]
+        LO["limitador-operator"]
+        DO["dns-operator"]
+        MG["mcp-gateway controller"]
     end
 
     KCR -->|"triggers"| KOP
 
-    subgraph kuadrant-ns["Kuadrant CR namespace"]
-        AO["authorino-operator<br/>Deployment + SA + CRB"]
-        LO["limitador-operator<br/>Deployment + SA + CRB"]
-        DO["dns-operator<br/>Deployment + SA + CRB"]
-        MG["mcp-gateway controller<br/>Deployment + SA + CRB"]
+    subgraph kuadrant-cr-ns["Kuadrant CR namespace"]
         ACR["Authorino CR"]
         LCR["Limitador CR"]
         AW["Authorino Deployment"]
@@ -120,10 +117,6 @@ graph TB
         MGW["MCP broker + router"]
     end
 
-    KOP -->|"renders chart"| AO
-    KOP -->|"renders chart"| LO
-    KOP -->|"renders chart"| DO
-    KOP -->|"renders chart"| MG
     KOP -->|"creates wrapper CR"| ACR
     KOP -->|"creates wrapper CR"| LCR
 
@@ -135,6 +128,8 @@ graph TB
     LCR --> LW
     MGCR --> MGW
 ```
+
+Child operator controllers are already running in the operator namespace (deployed at startup). When a user creates a Kuadrant CR, kuadrant-operator creates wrapper CRs (Authorino CR, Limitador CR) in the Kuadrant CR's namespace. The child operators reconcile these into data plane workloads. MCPGatewayExtension is created directly by the user.
 
 ## RBAC Model
 
@@ -149,7 +144,7 @@ graph LR
     end
 
     subgraph roles["ClusterRoles"]
-        KR["kuadrant-operator-manager<br/>infrastructure perms<br/>+ bind on child roles"]
+        KR["kuadrant-operator-manager<br/>infrastructure perms<br/>+ escalate/bind on child roles<br/>+ CRD create"]
         AR["authorino-operator-manager<br/>authorino-manager-role<br/>authorino-manager-k8s-auth-role"]
         LR_["limitador-operator-manager-role"]
         DR["dns-operator-manager-role<br/>dns-operator-remote-cluster-role"]
@@ -158,21 +153,28 @@ graph LR
 
     subgraph who["Created by"]
         OLM_H["Helm or OLM"]
-        KUADRANT["kuadrant-operator<br/>at runtime"]
+        KUADRANT["kuadrant-operator<br/>at startup"]
     end
 
-    OLM_H -->|"ClusterRoleBinding"| KSA
+    OLM_H -->|"installs"| KSA
+    OLM_H -->|"installs"| KR
     KSA --> KR
 
-    KUADRANT -->|"ClusterRoleBinding<br/>using bind"| ASA
-    KUADRANT -->|"ClusterRoleBinding<br/>using bind"| LSA
-    KUADRANT -->|"ClusterRoleBinding<br/>using bind"| DSA
-    KUADRANT -->|"ClusterRoleBinding<br/>using bind"| MSA
+    KUADRANT -->|"creates ClusterRole<br/>using escalate"| AR
+    KUADRANT -->|"creates ClusterRole<br/>using escalate"| LR_
+    KUADRANT -->|"creates ClusterRole<br/>using escalate"| DR
+    KUADRANT -->|"creates ClusterRole<br/>using escalate"| MR
+    KUADRANT -->|"creates CRB<br/>using bind"| ASA
+    KUADRANT -->|"creates CRB<br/>using bind"| LSA
+    KUADRANT -->|"creates CRB<br/>using bind"| DSA
+    KUADRANT -->|"creates CRB<br/>using bind"| MSA
     ASA --> AR
     LSA --> LR_
     DSA --> DR
     MSA --> MR
 ```
+
+The installer (Helm or OLM) only installs the kuadrant-operator's own SA, ClusterRole, and CRB. All child operator ClusterRoles, SAs, and CRBs are created by the kuadrant-operator at startup using `escalate` (to create ClusterRoles with permissions it does not hold) and `bind` (to create CRBs referencing those ClusterRoles).
 
 ## Resource Ownership
 
@@ -180,21 +182,37 @@ graph LR
 graph TB
     USER["User"] -->|"creates"| KCR["Kuadrant CR"]
     USER -->|"creates"| POLICIES["AuthPolicy, RateLimitPolicy<br/>DNSPolicy, TLSPolicy"]
+    USER -->|"creates"| MGCR["MCPGatewayExtension CR"]
 
     subgraph installer["Installed by Helm or OLM"]
-        CRDs["All CRDs"]
-        CR["Component ClusterRoles"]
+        KOP_CRDs["kuadrant-operator CRDs"]
         KOP_DEP["kuadrant-operator Deployment"]
         KOP_RBAC["kuadrant-operator SA, ClusterRole, CRB"]
     end
 
-    KCR -->|"ownerRef"| AUTH_OP["authorino-operator Deployment"]
-    KCR -->|"ownerRef"| LIM_OP["limitador-operator Deployment"]
-    KCR -->|"ownerRef"| DNS_OP["dns-operator Deployment"]
-    KCR -->|"ownerRef"| MCP_OP["mcp-gateway Deployment"]
-    KCR -->|"ownerRef"| AUTH_CR["Authorino CR"]
-    KCR -->|"ownerRef"| LIM_CR["Limitador CR"]
+    subgraph startup["Deployed by kuadrant-operator at startup"]
+        CHILD_CRDs["Child operator CRDs"]
+        CHILD_CR["Child operator ClusterRoles"]
+        AUTH_OP["authorino-operator Deployment + SA + CRB"]
+        LIM_OP["limitador-operator Deployment + SA + CRB"]
+        DNS_OP["dns-operator Deployment + SA + CRB"]
+        MCP_OP["mcp-gateway Deployment + SA + CRB"]
+    end
 
-    AUTH_CR -->|"ownerRef"| AUTH_WL["Authorino Deployment"]
-    LIM_CR -->|"ownerRef"| LIM_WL["Limitador Deployment"]
+    subgraph kuadrant-cr["Triggered by Kuadrant CR"]
+        AUTH_CR["Authorino CR"]
+        LIM_CR["Limitador CR"]
+    end
+
+    KCR --> AUTH_CR
+    KCR --> LIM_CR
+
+    AUTH_CR -->|"reconciled by<br/>authorino-operator"| AUTH_WL["Authorino Deployment"]
+    LIM_CR -->|"reconciled by<br/>limitador-operator"| LIM_WL["Limitador Deployment"]
+    MGCR -->|"reconciled by<br/>mcp-gateway"| MCP_WL["MCP broker + router"]
 ```
+
+Three layers of resource ownership:
+1. **Installer** (Helm/OLM): kuadrant-operator's own resources only
+2. **kuadrant-operator at startup**: child operator CRDs, ClusterRoles, controllers (not tied to any CR)
+3. **kuadrant-operator via Kuadrant CR**: wrapper CRs that trigger data plane workloads
