@@ -79,19 +79,20 @@ For visual diagrams covering the build-time chart sync, runtime reconciliation c
 
 ## Chart sync process
 
-Component Helm charts are sourced from upstream repos (authorino-operator, limitador-operator, dns-operator, mcp-gateway). A sync tool downloads each chart as-is and places it in the operator repo:
+Component Helm charts are sourced from upstream repos (authorino-operator, limitador-operator, dns-operator, mcp-gateway). A sync tool downloads each chart as-is and places it in the operator repo, driven by a config file (`component-charts/sync.yaml`) that declares which upstream repos and branches to track:
 
 ```text
-config/child-operators/charts/
+component-charts/
+├── sync.yaml               # Component tracking config
 ├── authorino-operator/     # Complete upstream chart
 ├── limitador-operator/     # Complete upstream chart
 ├── dns-operator/           # Complete upstream chart
 └── mcp-gateway/            # Complete upstream chart
 ```
 
-Charts are copied as-is from upstream with no rendering, splitting, or modification. The complete chart (Chart.yaml, values.yaml, templates/, crds/) is preserved so the operator can render it at runtime exactly as it would be used in a standalone Helm installation.
+Charts are copied as-is from upstream with no rendering, splitting, or modification. The complete chart (Chart.yaml, values.yaml, templates/, crds/) is preserved so the operator can render it at runtime exactly as it would be used in a standalone Helm installation. The sync tool resolves the tracked branch to a commit SHA and pins it in `sync.yaml` for reproducibility.
 
-Synced charts are committed to the repo. The sync is run manually via `make sync-child-operator-charts` when updating component versions. Charts are also packaged into the operator container image for runtime access.
+Synced charts are committed to the repo. The sync is run manually via `make sync-component-charts` or triggered automatically via `repository_dispatch` from component repos. Charts are also packaged into the operator container image for runtime access.
 
 ## Resource ownership
 
@@ -189,15 +190,13 @@ However, some upstream chart changes would be beneficial:
 
 Since component repos no longer need to produce their own OLM bundles or catalogs, OLM-specific artefacts can also be removed to reduce maintenance burden: `bundle/`, `catalog/`, `config/manifests/`, `config/deploy/olm/`, `config/scorecard/`, `bundle.Dockerfile`, `operator-sdk` and `opm` tool dependencies.
 
-## Automated dependency sync
+## Automated component sync
 
-With the kuadrant-operator consuming charts from multiple child repos, automation is needed to keep them in sync. A pattern for this already exists between authorino and authorino-operator: push to main triggers a `repository_dispatch` to the downstream repo, which runs the sync tool and creates a PR.
+A Go CLI tool (`hack/sync-components/`) manages chart syncing, driven by a config file (`component-charts/sync.yaml`) that declares each component's upstream repo, chart path, tracked branch, and pinned commit SHA (`ref`). The tool resolves the tracked branch to its latest commit SHA, downloads the chart at that SHA, and updates only the `ref` field in the config file. The `tracked-branch` field remains unchanged and continues to identify which upstream branch to follow.
 
-The same pattern should be adopted for the kuadrant-operator. When a child repo's CI completes successfully on a tracked branch, it dispatches to the kuadrant-operator. The sync tool runs, and if there are changes, a PR is created or updated. The automation should manage a single open PR per target branch and child component (e.g. `sync/main/authorino-operator`, `sync/release-v1.5/authorino-operator`), force-updating it on each trigger rather than accumulating stale PRs.
+When a component repo pushes to its tracked branch, a `repository_dispatch` event notifies the kuadrant-operator. A GitHub Actions workflow receives the event, determines which kuadrant-operator branches track that component (currently the default branch only), runs the sync tool, and creates or updates a PR per target branch and component (e.g. `sync/main/dns-operator`).
 
-This automation must support not just `main` but also `release-*` branches. Multiple kuadrant-operator release branches may track different branches of the same child component. For example, `kuadrant-operator/main` may track `authorino-operator/main` while `kuadrant-operator/release-v1.5` tracks `authorino-operator/release-v1.5`.
-
-Changes to the release process and version pinning strategy are out of scope for this RFC and will be addressed separately.
+Release branch sync support is deferred until the branch mapping strategy for releases is defined. Changes to the release process and version pinning strategy are out of scope for this RFC and will be addressed separately.
 
 ## Migration from multi-operator OLM installation
 

@@ -11,7 +11,7 @@
 | **escalate** | RBAC verb that allows creating ClusterRoles with permissions the creator does not hold |
 | **bind** | RBAC verb that allows creating ClusterRoleBindings to ClusterRoles whose permissions the creator does not hold |
 | **GITREF** | Git reference (branch, tag, or SHA) used to pull charts from upstream repos |
-| **Wrapper CR** | Authorino/Limitador custom resources created by kuadrant-operator and reconciled by child operators |
+| **Wrapper CR** | Authorino/Limitador custom resources created by kuadrant-operator and reconciled by component controllers |
 
 ## Build-Time: Chart Sync and Packaging
 
@@ -24,35 +24,36 @@ graph LR
         MG["Kuadrant/mcp-gateway"]
     end
 
-    SYNC["make sync-child-operator-charts"]
+    SYNC["make sync-component-charts"]
 
-    AO -->|GITREF| SYNC
-    LO -->|GITREF| SYNC
-    DO -->|GITREF| SYNC
-    MG -->|GITREF| SYNC
+    AO -->|"tracked-branch → SHA"| SYNC
+    LO -->|"tracked-branch → SHA"| SYNC
+    DO -->|"tracked-branch → SHA"| SYNC
+    MG -->|"tracked-branch → SHA"| SYNC
 
-    subgraph local["config/child-operators/charts/"]
+    subgraph local["component-charts/"]
+        cfg["sync.yaml<br/>(tracking config)"]
         ao_t["authorino-operator/"]
         lo_t["limitador-operator/"]
         do_t["dns-operator/"]
         mg_t["mcp-gateway/"]
     end
 
-    SYNC -->|"copies chart as-is"| local
+    SYNC -->|"copies chart as-is,<br/>pins commit SHA"| local
 ```
 
-Charts are copied unmodified from upstream repos. No rendering, splitting, or classification at sync time. Each chart directory contains the complete upstream chart (Chart.yaml, values.yaml, templates/, crds/).
+Charts are copied unmodified from upstream repos. No rendering, splitting, or classification at sync time. Each chart directory contains the complete upstream chart (Chart.yaml, values.yaml, templates/, crds/). The sync tool resolves each component's tracked branch to a commit SHA and pins it in `sync.yaml`.
 
 ```mermaid
 graph LR
-    subgraph local["config/child-operators/charts/"]
+    subgraph local["component-charts/"]
         CHARTS["Complete upstream charts"]
     end
 
     CHARTS -->|"COPY in Dockerfile"| IMAGE["Operator container image<br/>/charts/"]
 ```
 
-The kuadrant-operator OLM bundle and Helm chart contain only the kuadrant-operator's own resources (CRDs, Deployment, RBAC). Child operator resources are not included in the bundle or Helm chart.
+The kuadrant-operator OLM bundle and Helm chart contain only the kuadrant-operator's own resources (CRDs, Deployment, RBAC). Component resources are not included in the bundle or Helm chart.
 
 ## Cluster State After Installation (before Kuadrant CR)
 
@@ -87,10 +88,10 @@ graph TB
         KOP -->|"applies CRDs<br/>at startup"| M_CRD
     end
 
-    KOP -.->|"waiting for<br/>Kuadrant CR"| IDLE["No data plane workloads yet<br/>Child controllers already running"]
+    KOP -.->|"waiting for<br/>Kuadrant CR"| IDLE["No Kuadrant-managed data plane workloads yet<br/>Component controllers already running"]
 ```
 
-All child operator controllers, CRDs, and ClusterRoles are deployed at operator startup before the controller manager begins watching resources. No Kuadrant CR is needed for the control plane to be running.
+All component controllers, CRDs, and ClusterRoles are deployed at operator startup before the controller manager begins watching resources. No Kuadrant CR is needed for the control plane to be running. MCPGatewayExtension is an exception — it is created directly by the user and reconciled by the mcp-gateway controller independently of the Kuadrant CR.
 
 ## Runtime: Reconciliation Chain
 
@@ -129,7 +130,7 @@ graph TB
     MGCR --> MGW
 ```
 
-Child operator controllers are already running in the operator namespace (deployed at startup). When a user creates a Kuadrant CR, kuadrant-operator creates wrapper CRs (Authorino CR, Limitador CR) in the Kuadrant CR's namespace. The child operators reconcile these into data plane workloads. MCPGatewayExtension is created directly by the user.
+Component controllers are already running in the operator namespace (deployed at startup). When a user creates a Kuadrant CR, kuadrant-operator creates wrapper CRs (Authorino CR, Limitador CR) in the Kuadrant CR's namespace. The component controllers reconcile these into data plane workloads. MCPGatewayExtension is created directly by the user.
 
 ## RBAC Model
 
@@ -144,7 +145,7 @@ graph LR
     end
 
     subgraph roles["ClusterRoles"]
-        KR["kuadrant-operator-manager<br/>infrastructure perms<br/>+ escalate/bind on child roles<br/>+ CRD create"]
+        KR["kuadrant-operator-manager<br/>infrastructure perms<br/>+ escalate/bind on component roles<br/>+ CRD create"]
         AR["authorino-operator-manager<br/>authorino-manager-role<br/>authorino-manager-k8s-auth-role"]
         LR_["limitador-operator-manager-role"]
         DR["dns-operator-manager-role<br/>dns-operator-remote-cluster-role"]
@@ -174,7 +175,7 @@ graph LR
     MSA --> MR
 ```
 
-The installer (Helm or OLM) only installs the kuadrant-operator's own SA, ClusterRole, and CRB. All child operator ClusterRoles, SAs, and CRBs are created by the kuadrant-operator at startup using `escalate` (to create ClusterRoles with permissions it does not hold) and `bind` (to create CRBs referencing those ClusterRoles).
+The installer (Helm or OLM) only installs the kuadrant-operator's own SA, ClusterRole, and CRB. All component ClusterRoles, SAs, and CRBs are created by the kuadrant-operator at startup using `escalate` (to create ClusterRoles with permissions it does not hold) and `bind` (to create CRBs referencing those ClusterRoles).
 
 ## Resource Ownership
 
@@ -191,8 +192,8 @@ graph TB
     end
 
     subgraph startup["Deployed by kuadrant-operator at startup"]
-        CHILD_CRDs["Child operator CRDs"]
-        CHILD_CR["Child operator ClusterRoles"]
+        COMP_CRDs["Component CRDs"]
+        COMP_CR["Component ClusterRoles"]
         AUTH_OP["authorino-operator Deployment + SA + CRB"]
         LIM_OP["limitador-operator Deployment + SA + CRB"]
         DNS_OP["dns-operator Deployment + SA + CRB"]
@@ -214,5 +215,5 @@ graph TB
 
 Three layers of resource ownership:
 1. **Installer** (Helm/OLM): kuadrant-operator's own resources only
-2. **kuadrant-operator at startup**: child operator CRDs, ClusterRoles, controllers (not tied to any CR)
+2. **kuadrant-operator at startup**: component CRDs, ClusterRoles, controllers (not tied to any CR)
 3. **kuadrant-operator via Kuadrant CR**: wrapper CRs that trigger data plane workloads
