@@ -3,7 +3,7 @@
 - Feature Name: `two_phase_release_workflow`
 - Start Date: 2026-06-04
 - RFC PR: [Kuadrant/architecture#178](https://github.com/Kuadrant/architecture/pull/178)
-- Issue tracking: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/issues/0000)
+- Issue tracking:
 
 # Summary
 [summary]: #summary
@@ -131,7 +131,7 @@ Operators declare their operand dependencies, so the version gate can verify ava
 
 Release branches follow the convention `release-X.Y` where `X.Y` is the minor version, without a `v` prefix.
 For example, version `1.5.0` releases from branch `release-1.5`, and a subsequent patch `1.5.1` releases from the same branch.
-This convention is defined in detail in [RFC 0018](https://github.com/Kuadrant/architecture/blob/main/rfcs/0018-rlease-branch-naming.md).
+This convention is defined in detail in [RFC 0018](https://github.com/Kuadrant/architecture/blob/main/rfcs/0018-release-branch-naming.md).
 
 Using minor-level branches means patch releases do not require new branches - they reuse the existing release branch with an updated version in `release.yaml`.
 This is critical for automation: a consistent branch naming scheme allows tooling to discover and operate on release branches without per-component configuration.
@@ -203,8 +203,9 @@ dependencies:
 
 - `<component-name>` (required): The name of the component. Must match the repository name or the component's canonical identifier.
 - `version` (required): A semantic version string (`X.Y.Z`), or `0.0.0` on the `main` branch to indicate active development.
-- `dependencies` (optional): A map of dependency names to their required versions. Each dependency name must correspond to a repository in the Kuadrant GitHub organization.
-The version `0.0.0` indicates "targets latest" and is not validated by the version gate.
+- `dependencies` (optional): A map of dependency names to their required versions. 
+Each dependency name must correspond to a repository in the Kuadrant GitHub organization.
+The version `0.0.0` indicates "targets latest" and is rejected by the version gate, see [Version gate specification](#Version-gate-specification).
 
 **Invariants:**
 
