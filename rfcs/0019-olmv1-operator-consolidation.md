@@ -90,7 +90,7 @@ component-charts/
 └── mcp-gateway/            # Complete upstream chart
 ```
 
-Charts are copied as-is from upstream with no rendering, splitting, or modification. The complete chart (Chart.yaml, values.yaml, templates/, crds/) is preserved so the operator can render it at runtime exactly as it would be used in a standalone Helm installation. The sync tool resolves the tracked branch to a commit SHA and pins it in `sync.yaml` for reproducibility.
+Charts are copied as-is from upstream with no rendering, splitting, or modification. The complete chart (Chart.yaml, values.yaml, templates/, crds/) is preserved so the operator can render it at runtime exactly as it would be used in a standalone Helm installation. The sync tool resolves the tracked branch to its latest commit SHA and updates only the `ref` field in `sync.yaml` for reproducibility. The `tracked-branch` field remains unchanged and continues to identify which upstream branch to follow.
 
 Synced charts are committed to the repo. The sync is run manually via `make sync-component-charts` or triggered automatically via `repository_dispatch` from component repos. Charts are also packaged into the operator container image for runtime access.
 
@@ -102,7 +102,7 @@ All child operator resources are managed by the kuadrant-operator at runtime. Th
 
 | Resource | Notes |
 |---|---|
-| kuadrant-operator CRDs | Kuadrant, AuthPolicy, RateLimitPolicy, DNSPolicy, TLSPolicy, TokenRateLimitPolicy |
+| kuadrant-operator CRDs | Kuadrant, AuthPolicy, RateLimitPolicy, DNSPolicy, TLSPolicy, TokenRateLimitPolicy, KuadrantControlPlane |
 | kuadrant-operator Deployment | The operator itself |
 | kuadrant-operator ServiceAccount, ClusterRole, ClusterRoleBinding | Operator's own RBAC |
 
@@ -126,11 +126,52 @@ All child operator resources are managed by the kuadrant-operator at runtime. Th
 
 Child operator CRDs are not included in the OLM bundle. This is a deliberate choice that eliminates GVK conflicts during OLM upgrades from the current multi-operator installation (see [Migration](#migration-from-multi-operator-olm-installation)).
 
+## KuadrantControlPlane CRD
+
+A new cluster-scoped singleton CRD (`KuadrantControlPlane`) drives component deployment and reports control plane health. This separates control plane management (which components are deployed, their status) from data plane management (the Kuadrant CR, policies, workloads), following the same pattern used by RHOAI/RHODS where `DSCInitialization` handles platform setup separately from `DataScienceCluster`.
+
+The operator auto-creates a default `KuadrantControlPlane` CR named `default` on startup. CEL validation enforces the singleton constraint, the API server rejects any CR not named `default`. If deleted, the controller immediately re-creates it (self-healing). Child operator resources have no `ownerReferences` pointing to the CR, so deletion does not cascade.
+
+The CRD has no spec fields initially, all components are always deployed.
+
+### Status
+
+```yaml
+status:
+  observedGeneration: 1
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: ComponentsHealthy
+  components:
+    - name: dns-operator
+      ready: true
+      image: quay.io/kuadrant/dns-operator:latest
+      crds:
+        - name: dnsrecords.kuadrant.io
+          established: true
+        - name: dnshealthcheckprobes.kuadrant.io
+          established: true
+```
+
+The `Ready` condition reflects overall control plane health. Per-component status reports Deployment readiness, the deployed image reference, and CRD establishment state.
+
+### Controller
+
+The KuadrantControlPlane controller is a standard controller-runtime reconciler, separate from the PolicyMachineryController (which handles data plane policies). Both run via the same controller-runtime manager. The controller watches child operator Deployments and CRDs via predicates, so status converges immediately when a Deployment becomes ready or a CRD is established. A periodic 5-minute resync provides drift reconciliation as a safety net.
+
 ## Runtime rendering
 
-On startup, before the controller manager begins watching resources, the kuadrant-operator renders each component controller's Helm chart from `/charts/<name>/` in the container image using the Helm Go SDK (`ClientOnly=true`, `DryRun=true`). This is the same pattern used by OpenShift's [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator) and [opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator) in production.
+On startup, the kuadrant-operator bootstraps child operator CRDs before the controller manager starts. This is required because the PolicyMachineryController's `BootOptionsBuilder` checks for CRD availability at boot time and does not re-check, CRDs created after boot are not detected. Only CRDs are applied pre-manager; all other resources are deployed by the KuadrantControlPlane controller during reconciliation.
 
-Charts are rendered and applied following Helm's install ordering (CRDs first, then dependent resources). All child operator resources must be established before the controller manager starts watching for CRDs.
+The startup sequence:
+
+1. **Pre-manager CRD bootstrap**: render each component chart using the Helm Go SDK (`ClientOnly=true`, `DryRun=true`), extract CRDs, apply via Server-Side Apply, wait for each CRD to reach the `Established` condition (30s timeout per CRD)
+2. **Manager starts**: the KuadrantControlPlane controller and PolicyMachineryController both start
+3. **KuadrantControlPlane reconciliation**: on the first reconcile (triggered by the auto-created CR), the controller renders each component chart, applies all resources (CRDs again via SSA, idempotent, plus RBAC, Deployments, Services, etc.) sorted by Helm install order, and updates the CR status
+4. **Drift reconciliation**: subsequent reconciles (every 5 minutes, or immediately when a watched Deployment/CRD changes) re-apply all resources via SSA, correcting any drift
+
+Charts are rendered from `/charts/<name>/` in the container image. CRDs from both the standard `crds/` directory and `templates/` are handled, the renderer extracts CRDs from `chart.CRDObjects()` and identifies `CustomResourceDefinition` objects in the template output.
 
 Component controllers are deployed into the kuadrant-operator's namespace (e.g. `kuadrant-system`). They are control plane singletons, one instance per cluster, not per Kuadrant CR. This matches the current model where OLM deploys all child operators into the same namespace.
 
@@ -140,7 +181,7 @@ Component controller Deployments are not owned by the Kuadrant CR. They run inde
 
 The kuadrant-operator requires permissions to create and manage all child operator resources at runtime:
 
-- **`apiextensions.k8s.io` CRDs**: unscoped `create` (required because the resource may not exist yet), plus `get`, `list`, `watch`, `update`, `patch` scoped to specific child CRD names via `resourceNames`. This ensures the operator can only modify CRDs it manages while limiting the broad permission to `create` only
+- **`apiextensions.k8s.io` CRDs**: unscoped `create`, `list`, `watch` (required because the resource may not exist yet, and the controller-runtime informer cache requires `list`/`watch` at cluster scope), plus `get`, `update`, `patch` scoped to specific child CRD names via `resourceNames`. This ensures the operator can only modify CRDs it manages while limiting the broad permissions to `create`, `list`, and `watch` only
 - **`rbac.authorization.k8s.io` ClusterRoles**: unscoped `create` (same reason as CRDs), plus `get`, `list`, `watch`, `update`, `patch`, `bind`, `escalate` scoped to specific child ClusterRole names via `resourceNames`
 - **`rbac.authorization.k8s.io` ClusterRoleBindings, Roles, RoleBindings**: standard CRUD to bind component SAs to their ClusterRoles
 - **`apps` Deployments, core resources**: standard CRUD for component controllers
@@ -168,6 +209,12 @@ OLM convention requires all container images to be declared in the CSV's `relate
 | `RELATED_IMAGE_MCP_GATEWAY` | `ghcr.io/kuadrant/mcp-controller:latest` | MCP Gateway controller |
 
 These are declared as environment variables on the kuadrant-operator Deployment (`config/manager/manager.yaml`). The downstream build system overrides them with version-pinned or mirrored image references. The Helm rendering reads these env vars and applies the correct images when rendering child operator charts, either by patching the rendered Deployment image directly (for simple charts that don't support values-based overrides) or by passing Helm values (for charts with configurable image fields).
+
+## Resource labelling
+
+All resources rendered from child operator Helm charts are stamped with `app.kubernetes.io/managed-by: kuadrant-operator` during rendering, overriding any `managed-by` label set by the chart templates (typically `helm`). This ensures child operator resources are clearly identified as managed by the kuadrant-operator, not by Helm or OLM. The label is applied to all resource types including CRDs.
+
+During OLM migration, the cleanup process strips stale OLM labels (`olm.managed`, `olm.owner`, `olm.owner.kind`, `olm.owner.namespace`, `olm.deployment-spec-hash`, `operators.coreos.com/*`) and CSV `ownerReferences` from all resources previously owned by orphaned child operator CSVs. Combined with the `managed-by: kuadrant-operator` label from chart rendering, this ensures a clean transition from OLM ownership to kuadrant-operator ownership with no stale metadata.
 
 ## Wrapper CRs preserved
 
@@ -206,9 +253,13 @@ Since child operator CRDs are not included in the OLM bundle, there are no GVK c
 
 On startup, the upgraded kuadrant-operator:
 
-1. Applies child operator CRDs (which already exist from the previous installation)
-2. Deploys child operator controllers from embedded Helm charts
-3. Detects and removes orphaned child operator Subscriptions and CSVs programmatically
+1. Bootstraps child operator CRDs via SSA (which already exist from the previous installation, SSA is a no-op for unchanged CRDs)
+2. Creates a default `KuadrantControlPlane` CR
+3. The KuadrantControlPlane controller deploys child operator controllers from embedded Helm charts, with `app.kubernetes.io/managed-by: kuadrant-operator` stamped on all resources
+4. Detects and removes orphaned child operator Subscriptions and CSVs programmatically
+5. Strips stale OLM labels (`olm.*`, `operators.coreos.com/*`) and CSV `ownerReferences` from all resources previously owned by orphaned child operator CSVs. Resources are discovered dynamically via `olm.owner` and `operators.coreos.com/<package>.<namespace>` label selectors, no hardcoded resource type list
+
+The OLM cleanup runs once at startup (not during reconciliation) and is designed to be removed after 2-3 releases, once all users have upgraded past the consolidation release.
 
 The data plane (Authorino server, Limitador server) is unaffected throughout. Verified on OpenShift CRC: deleting child operator CSVs removes their controller Deployments but does not cascade-delete CRDs, ClusterRoles, or data plane workloads. The consolidated operator's child controllers take over seamlessly.
 
@@ -236,15 +287,14 @@ These tests should run in CI for every release and serve as ongoing regression t
 This RFC deliberately preserves wrapper CRs and child operator controllers. A follow-on RFC should address further architectural simplification:
 
 - **Removing intermediate operator layers and wrapper CRs**: deploying Authorino and Limitador workloads directly from the kuadrant-operator, eliminating authorino-operator and limitador-operator as running controllers. This removes the `Authorino` and `Limitador` CRDs from the user-facing API surface. Each operator removed is a separate container image with its own Go dependency tree. Every transitive dependency is a potential CVE that needs scanning, patching, and releasing. Removing these controllers reduces the security surface area and maintenance burden.
-- **Control plane status CR**: a new cluster-scoped CR (e.g. `KuadrantControlPlane` or `KuadrantPlatform`, separate from the Kuadrant CR) for reporting child operator health and eventually enabling conditional component deployment. The operator would auto-create a default on startup. This separates control plane management (which components are deployed, their health) from data plane management (the Kuadrant CR, policies, workloads). This is the same pattern used by RHOAI/RHODS, where `DSCInitialization` handles platform setup and `DataScienceCluster` controls component lifecycle.
-- **Conditional component deployment**: using the control plane CR to allow operators to be selectively enabled or disabled, avoiding deploying components that are not needed (e.g. mcp-gateway on clusters without Istio).
+- **Conditional component deployment**: using the KuadrantControlPlane CR spec to allow operators to be selectively enabled or disabled, avoiding deploying components that are not needed (e.g. mcp-gateway on clusters without Istio). The KuadrantControlPlane CRD is already implemented with status reporting; adding per-component `ManagementState` (Managed/Removed) fields to the spec is the next step.
 - **Extracting a dedicated policy controller**: separating policy reconciliation (AuthPolicy, RateLimitPolicy, DNSPolicy, TLSPolicy) from the kuadrant-operator into a `kuadrant-policy-controller` deployed as a component, making the kuadrant-operator purely an orchestration layer.
 - **Kuadrant CR evolution**: exposing day 2 configuration (replicas, resources, storage backend) through the Kuadrant CR.
 
 # Drawbacks
 [drawbacks]: #drawbacks
 
-- **Broader RBAC for kuadrant-operator**: the kuadrant-operator needs an unscoped `create` on `apiextensions.k8s.io` CRDs (scoped `create` is not possible in Kubernetes RBAC since the resource does not exist yet) and `escalate` on ClusterRoles. All other CRD verbs (`get`, `update`, `patch`) are scoped to specific child CRD names. These permissions follow the same pattern used by the OpenShift [opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator) and [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator) in production.
+- **Broader RBAC for kuadrant-operator**: the kuadrant-operator needs unscoped `create`, `list`, and `watch` on `apiextensions.k8s.io` CRDs (scoped `create` is not possible in Kubernetes RBAC since the resource does not exist yet; `list`/`watch` are required at cluster scope for the controller-runtime informer cache) and `escalate` on ClusterRoles. All other CRD verbs (`get`, `update`, `patch`) are scoped to specific child CRD names. These permissions follow the same pattern used by the OpenShift [opendatahub-operator](https://github.com/opendatahub-io/opendatahub-operator) and [cluster-olm-operator](https://github.com/openshift/cluster-olm-operator) in production.
 - **Chart sync maintenance**: component controller charts must be kept in sync. Automated dependency sync (via GitHub dispatch) mitigates this but adds CI complexity.
 - **No OLM CRD protection**: OLM does not know about child operator CRDs, so it cannot prevent another OLM-managed operator from claiming the same GVKs. In practice, this is a narrow risk: it requires installing a standalone child operator via OLM alongside kuadrant, which is a user error. It is worth noting that OLM's GVK protection only prevents conflicts between OLM-managed packages. It does nothing to prevent a Helm chart or raw manifest from altering or replacing a CRD on the cluster.
 - **Startup failure is fatal**: if a child operator chart is malformed or the cluster rejects a resource, the kuadrant-operator will not start. This is a feature, not a bug: it prevents partially-upgraded states where some components are on the new version and others are not. The previous operator pod continues running until the new one is healthy (Deployment rollout strategy).
@@ -333,4 +383,4 @@ Each component published as its own independent OLM package with no dependency d
 
 - **Wrapper CR removal timeline**: this RFC preserves wrapper CRs. The timeline and approach for removing them depends on how much the Authorino and Limitador CRs are used for direct user customisation vs being purely internal. This will be addressed in a follow-on RFC.
 
-- **Control plane status and configuration CR**: the RFC identifies the need for a new CR to report child operator health and eventually enable conditional deployment, but the design of this CR is deferred to implementation.
+- **Control plane status and configuration CR**: ~~the RFC identifies the need for a new CR to report child operator health and eventually enable conditional deployment, but the design of this CR is deferred to implementation.~~ **Resolved**: the `KuadrantControlPlane` CRD has been implemented as a cluster-scoped singleton with per-component status reporting (see [KuadrantControlPlane CRD](#kuadrantcontrolplane-crd) section). Conditional deployment via spec fields is deferred to future work.
