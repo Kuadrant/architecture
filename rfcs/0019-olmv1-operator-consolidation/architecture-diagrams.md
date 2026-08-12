@@ -90,10 +90,11 @@ graph TB
     end
 
     KOP -->|"auto-creates"| KCP
-    KCP -->|"triggers<br/>reconciliation"| AO
-    KCP -->|"triggers<br/>reconciliation"| LO
-    KCP -->|"triggers<br/>reconciliation"| DO
-    KCP -->|"triggers<br/>reconciliation"| MG
+    KCP -->|"reconciled by<br/>KuadrantControlPlane<br/>controller"| DEPLOY["Deploys component<br/>Deployments, RBAC,<br/>Services, ConfigMaps"]
+    DEPLOY --> AO
+    DEPLOY --> LO
+    DEPLOY --> DO
+    DEPLOY --> MG
 
     KOP -.->|"waiting for<br/>Kuadrant CR"| IDLE["No Kuadrant-managed data plane workloads yet<br/>Component controllers already running"]
 ```
@@ -165,28 +166,30 @@ graph LR
 
     subgraph who["Created by"]
         OLM_H["Helm or OLM"]
-        KUADRANT["kuadrant-operator<br/>at startup"]
+        KCP_CTRL["KuadrantControlPlane<br/>controller"]
+        BOOTSTRAP["Pre-manager<br/>CRD bootstrap"]
     end
 
     OLM_H -->|"installs"| KSA
     OLM_H -->|"installs"| KR
     KSA --> KR
 
-    KUADRANT -->|"creates ClusterRole<br/>using escalate"| AR
-    KUADRANT -->|"creates ClusterRole<br/>using escalate"| LR_
-    KUADRANT -->|"creates ClusterRole<br/>using escalate"| DR
-    KUADRANT -->|"creates ClusterRole<br/>using escalate"| MR
-    KUADRANT -->|"creates CRB<br/>using bind"| ASA
-    KUADRANT -->|"creates CRB<br/>using bind"| LSA
-    KUADRANT -->|"creates CRB<br/>using bind"| DSA
-    KUADRANT -->|"creates CRB<br/>using bind"| MSA
+    BOOTSTRAP -->|"applies component<br/>CRDs only"| AR
+    KCP_CTRL -->|"creates ClusterRole<br/>using escalate"| AR
+    KCP_CTRL -->|"creates ClusterRole<br/>using escalate"| LR_
+    KCP_CTRL -->|"creates ClusterRole<br/>using escalate"| DR
+    KCP_CTRL -->|"creates ClusterRole<br/>using escalate"| MR
+    KCP_CTRL -->|"creates CRB<br/>using bind"| ASA
+    KCP_CTRL -->|"creates CRB<br/>using bind"| LSA
+    KCP_CTRL -->|"creates CRB<br/>using bind"| DSA
+    KCP_CTRL -->|"creates CRB<br/>using bind"| MSA
     ASA --> AR
     LSA --> LR_
     DSA --> DR
     MSA --> MR
 ```
 
-The installer (Helm or OLM) only installs the kuadrant-operator's own SA, ClusterRole, and CRB. All component ClusterRoles, SAs, and CRBs are created by the kuadrant-operator via the KuadrantControlPlane controller using `escalate` (to create ClusterRoles with permissions it does not hold) and `bind` (to create CRBs referencing those ClusterRoles).
+The installer (Helm or OLM) only installs the kuadrant-operator's own SA, ClusterRole, and CRB. Component CRDs are bootstrapped pre-manager (before the controller manager starts). All other component resources (ClusterRoles, SAs, CRBs, Deployments, Services) are created by the KuadrantControlPlane controller using `escalate` (to create ClusterRoles with permissions it does not hold) and `bind` (to create CRBs referencing those ClusterRoles).
 
 ## Resource Ownership
 
