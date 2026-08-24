@@ -9,7 +9,7 @@
 
 [summary]: #summary
 
-Enable Kuadrant extensions to run as standalone components that communicate with the operator over an authenticated gRPC channel, rather than as in-container subprocesses launched and managed by the operator. Standalone extensions connect to a single shared gRPC endpoint exposed by the operator, complete a handshake that establishes their identity and authenticates them with a pre-shared key, and then manage their own policy kind through the extension SDK for the lifetime of an authenticated session. This RFC covers the transport, the handshake and authentication model, credential management, and the session and state-synchronization lifecycle that a standalone extension requires.
+Enable Kuadrant extensions to run as standalone components that communicate with the operator over an authenticated gRPC channel, rather than as in-container subprocesses launched and managed by the operator. Standalone extensions connect to a single shared gRPC endpoint exposed by the operator, complete a handshake that authenticates them with a Kubernetes `ServiceAccount` token and authorizes the policy kind they may claim through Kubernetes RBAC, and then manage that policy kind through the extension SDK for the lifetime of an authenticated session. This RFC covers the transport, the handshake and authentication model, the RBAC-based ownership model, and the session and state-synchronization lifecycle that a standalone extension requires.
 
 # Motivation
 
@@ -23,7 +23,7 @@ Moving extensions to a standalone model removes that ceiling. An extension becom
 
 The audience for this work is community authors: people building extensions that each add a new policy kind against a stock operator, on their own release cadence, without contributing them back into the operator itself.
 
-The expected outcome: an author can deploy an extensioqn they wrote or obtained, authenticate it to the operator with a credential they control, and have it manage its policy kind — without forking Kuadrant and without modifying the operator image. This standalone model is the tech-preview milestone for the extensions feature.
+The expected outcome: an author can deploy an extension they wrote or obtained, authenticate it to the operator with a ServiceAccount an admin authorizes through RBAC, and have it manage its policy kind — without forking Kuadrant and without modifying the operator image. This standalone model is the tech-preview milestone for the extensions feature.
 
 # Guide-level explanation
 
@@ -33,48 +33,84 @@ An **extension** is a controller that owns a single policy kind — and may read
 
 Three concepts are introduced or made user-visible:
 
-- **Extension identity** — a name the extension announces for itself (for example `my-threat-policy`) and the policy kind it manages. The operator uses the identity to decide whether the extension is allowed to connect and which policy kind it may claim.
-- **Pre-shared key** — an opaque token the extension presents to prove it is allowed to connect. For extensions you deploy, you generate the token and give it to both the operator (via a Secret) and the extension.
+- **Extension identity** — the Kubernetes `ServiceAccount` the extension workload runs as. The extension presents a token for that ServiceAccount at handshake; the operator verifies it and derives the identity (`system:serviceaccount:<namespace>:<name>`) from the token rather than trusting a name the extension asserts.
+- **Ownership via RBAC** — which policy kind an extension may claim is a Kubernetes authorization decision. The extension's ServiceAccount is granted permission to `register` a specific policy kind through an ordinary `Role`/`ClusterRole`, and the operator checks that permission at handshake. There is no separate credential to generate or distribute.
 - **Session** — once an extension has handshaked successfully, it holds an authenticated session for as long as it stays connected. All of its subsequent calls ride on that session.
 
-The operator exposes a single gRPC endpoint (a Kubernetes `Service`) that every extension connects to. Built-in extensions and standalone extensions use the same endpoint and the same handshake; they differ only in where their credential comes from.
+The operator exposes a single gRPC endpoint (a Kubernetes `Service`) that every extension connects to. Built-in extensions and standalone extensions use the same endpoint and the same handshake; they differ only in where their token comes from.
 
 ## Deploying a standalone extension
 
 From a cluster admin's point of view the flow is:
 
-1. **Generate a token** and store it in the operator's extension-auth Secret, keyed by the extension's name:
-
-   ```console
-   $ kubectl create secret generic kuadrant-extension-auth \
-       --namespace kuadrant-system \
-       --from-literal=my-threat-policy=$(openssl rand -hex 32)
-   ```
-
-2. **Deploy the extension** as your own Deployment — in any namespace you like — and point it at the operator's extension endpoint. It reads its credential from a Secret in its own namespace:
+1. **Create a ServiceAccount and grant it the policy kind** it is allowed to manage. Ownership is expressed as an RBAC rule: the `register` verb on the virtual `policyregistrations` resource, scoped by `resourceNames` to the policy kind this extension owns.
 
    ```yaml
-   env:
-     - name: KUADRANT_EXTENSION_NAME
-       value: my-threat-policy
-     - name: KUADRANT_EXTENSION_ADDRESS
-       value: kuadrant-operator-extensions.kuadrant-system.svc:50052
-     - name: KUADRANT_EXTENSION_CREDENTIAL
-       valueFrom:
-         secretKeyRef:
-           name: my-threat-policy-credential
-           key: token
+   apiVersion: v1
+   kind: ServiceAccount
+   metadata:
+     name: my-threat-policy
+     namespace: my-namespace
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: ClusterRole
+   metadata:
+     name: my-threat-policy-register
+   rules:
+     - apiGroups: ["extensions.kuadrant.io"]
+       resources: ["policyregistrations"]
+       resourceNames: ["ThreatPolicy"] # the policy kind this extension may claim
+       verbs: ["register"]
+   ---
+   apiVersion: rbac.authorization.k8s.io/v1
+   kind: ClusterRoleBinding
+   metadata:
+     name: my-threat-policy-register
+   roleRef:
+     apiGroup: rbac.authorization.k8s.io
+     kind: ClusterRole
+     name: my-threat-policy-register
+   subjects:
+     - kind: ServiceAccount
+       name: my-threat-policy
+       namespace: my-namespace
    ```
 
-3. **The extension connects and handshakes.** On startup the SDK dials the endpoint, calls `Handshake` with the extension's name, version, policy kind, and credential, and — on success — receives a session token it attaches to every later call automatically. The extension then behaves exactly as it does today: it watches its CRD, resolves topology, and publishes data bindings.
+2. **Deploy the extension** as your own Deployment — in any namespace you like — running as that ServiceAccount, and point it at the operator's extension endpoint. It presents an audience-scoped ServiceAccount token, mounted as a projected volume that the kubelet auto-rotates:
 
-The token the extension presents must be byte-for-byte identical to the one stored under its name in the operator's `kuadrant-extension-auth` Secret — that shared value is what proves the extension is allowed to connect. The extension can live in any namespace and read the token from a Secret of its own (as above); only the operator's Secret is consulted at handshake time, so the two values simply have to match. If the credential is wrong, missing, too short, or the name is not present in the operator's Secret, the handshake is rejected with a clear reason and the extension does not start managing policies. If you remove the extension's key from the Secret, its session is revoked and its in-flight calls begin failing authentication. Rotating the credential later means updating both Secrets to the new value and rolling out the extension pod so it re-reads its env var; changing the operator-side value revokes the current session, so the extension re-handshakes with the new credential (see [Authentication and credentials](#authentication-and-credentials)).
+   ```yaml
+   spec:
+     serviceAccountName: my-threat-policy
+     containers:
+       - name: extension
+         env:
+           - name: KUADRANT_EXTENSION_ADDRESS
+             value: kuadrant-operator-extensions.kuadrant-system.svc:50052
+           - name: KUADRANT_EXTENSION_TOKEN_FILE
+             value: /var/run/secrets/kuadrant/token
+         volumeMounts:
+           - name: kuadrant-token
+             mountPath: /var/run/secrets/kuadrant
+             readOnly: true
+     volumes:
+       - name: kuadrant-token
+         projected:
+           sources:
+             - serviceAccountToken:
+                 path: token
+                 audience: kuadrant-extensions
+                 expirationSeconds: 3600
+   ```
 
-Because the extension is now a workload the author owns rather than a subprocess of the operator, it runs under its own `ServiceAccount` and needs its own RBAC: permission to watch and reconcile its CRD as well as any other resources it may need to manage. This is standard controller RBAC and ships alongside the extension's own manifests — the extension no longer inherits the operator's permissions.
+3. **The extension connects and handshakes.** On startup the SDK dials the endpoint, reads the current token from the projected file, and calls `Handshake` with the extension's version, the policy kind it intends to claim, and that token. The operator verifies the token (`TokenReview`) and checks that its ServiceAccount is authorized to register the claimed kind (`SubjectAccessReview`); on success it returns a session token the SDK attaches to every later call automatically. The extension then behaves exactly as it does today: it watches its CRD, resolves topology, and publishes data bindings.
+
+Identity and ownership are both decided by Kubernetes, not asserted by the extension. The token proves _who_ the extension is (its ServiceAccount), and the RBAC rule decides _what_ it may claim — so an extension can only take a policy kind an admin has explicitly granted it. If the token is missing, expired, or issued for the wrong audience, or the ServiceAccount lacks the `register` grant for the kind it claims, the handshake is rejected with a clear reason and the extension does not start managing policies. Revoking an extension is an RBAC change: delete the binding and its next handshake fails authorization (existing sessions are unaffected until they re-handshake — see [Authentication and credentials](#authentication-and-credentials)). There is no shared secret to rotate; the kubelet rotates the token automatically and the SDK re-reads the file.
+
+Because the extension is now a workload the author owns rather than a subprocess of the operator, its ServiceAccount also needs ordinary controller RBAC: permission to watch and reconcile its CRD as well as any other resources it may need to manage. This ships alongside the extension's own manifests — the extension no longer inherits the operator's permissions.
 
 ## What changes for extension authors
 
-Almost nothing. The transport switch and the handshake are handled by the SDK. An author writes reconciler logic against the same `KuadrantCtx` API as before; the SDK reads the endpoint address, name, and credential from the environment and performs the handshake before any reconcile runs. The difference is operational: the extension is now something you package and deploy, not something baked into the operator image.
+Almost nothing. The transport switch and the handshake are handled by the SDK. An author writes reconciler logic against the same `KuadrantCtx` API as before; the SDK reads the endpoint address and the token file path from the environment, reads the current ServiceAccount token, and performs the handshake before any reconcile runs. The difference is operational: the extension is now something you package and deploy — with a ServiceAccount and an RBAC grant — not something baked into the operator image.
 
 # Reference-level explanation
 
@@ -96,29 +132,31 @@ The standalone model, end to end:
   your namespace                                      kuadrant-system
   +-------------------------------+                   +-------------------------------------+
   | my-threat-policy              |    TCP :50052     | kuadrant-operator                   |
-  | (your Deployment)             | ================> | extensions Service -> gRPC server   |
-  |                               |                   |                                     |
-  |  SDK:                         |  1. Handshake     |  +-------------------------------+  |
-  |   dial ADDRESS  ------------- | ----------------> |  | auth interceptor              |  |
-  |   Handshake(name, version,    |     (credential)  |  |  Handshake        -> allow    |  |
-  |     policy_kind, credential)  |                   |  |  every other RPC  -> require  |  |
-  |                               |  2. session_token |  |                      session  |  |
-  |   attach x-kuadrant-session   | <---------------- |  +---------------+---------------+  |
-  |   reconcile + AddDataTo / ... |                   |                  | validates        |
-  +---------------+---------------+  3. RPCs w/ token |                  v                  |
-                  | reads             ==============> |  +---------------+---------------+  |
-                  v credential                        |  | session store (in-memory)     |  |
-  +-------------------------------+                   |  +---------------+---------------+  |
-  | Secret (yours): token: <tok>  |                   |                  ^ key == name       |
-  +-------------------------------+                   |  +---------------+---------------+  |
-      same value  ..............................>     |  | Secret kuadrant-extension-auth|  |
-                     must match                       |  |  data: my-threat-policy: <tok>|  |
+  | (your Deployment,             | ================> | extensions Service -> gRPC server   |
+  |  runs as its ServiceAccount)  |                   |                                     |
+  |                               |  1. Handshake     |  +-------------------------------+  |
+  |  SDK:                         | ----------------> |  | auth interceptor              |  |
+  |   dial ADDRESS  ------------- |     (SA token,    |  |  Handshake        -> verify   |  |
+  |   read token file             |      policy_kind) |  |  every other RPC  -> require  |  |
+  |   Handshake(version,          |                   |  |                      session  |  |
+  |     policy_kind, token)       |  2. session_token |  +-------+---------------+-------+  |
+  |   attach x-kuadrant-session   | <---------------- |          | 1a. TokenReview |          |
+  |   reconcile + AddDataTo / ... |                   |          | 1b. SubjectAccessReview   |
+  +---------------+---------------+  3. RPCs w/ token |          v (authn + authz)  |        |
+                  | reads             ==============> |  +-------+---------------+-------+  |
+                  v projected token                   |  | kube-apiserver                |  |
+  +-------------------------------+                   |  |  TokenReview  -> identity     |  |
+  | projected serviceAccountToken |                   |  |  SAR: register policy_kind?   |  |
+  |  audience: kuadrant-extensions|                   |  +---------------+---------------+  |
+  |  (kubelet auto-rotates)       |                   |                  | on success       |
+  +-------------------------------+                   |                  v                  |
+                                                      |  +---------------+---------------+  |
+                                                      |  | session store (in-memory)     |  |
                                                       |  +-------------------------------+  |
-                                                      |     ^ operator watches / validates  |
                                                       +-------------------------------------+
 ```
 
-An extension must call the `Handshake` RPC before any other RPC on the connection. The handshake carries identity and a credential and, on success, returns a session token:
+An extension must call the `Handshake` RPC before any other RPC on the connection. The handshake carries a ServiceAccount token and the policy kind the extension intends to claim and, on success, returns a session token:
 
 ```protobuf
 service ExtensionService {
@@ -133,11 +171,10 @@ message ResourceID {
 }
 
 message HandshakeRequest {
-  string name = 1;                        // extension identity, e.g. "my-threat-policy"
-  string version = 2;                     // extension version, for compatibility and logging
-  bytes  credential = 3;                  // pre-shared key
-  string policy_kind = 4;                 // policy kind this extension manages
-  repeated ResourceID owned_policies = 5; // CRs the extension currently owns; lets the operator prune stale state on connect (see State synchronization)
+  string version = 1;                     // extension version, for compatibility and logging
+  bytes  token = 2;                       // audience-scoped ServiceAccount token
+  string policy_kind = 3;                 // policy kind this extension intends to claim
+  repeated ResourceID owned_policies = 4; // CRs the extension currently owns; lets the operator prune stale state on connect (see State synchronization)
 }
 
 message HandshakeResponse {
@@ -147,24 +184,35 @@ message HandshakeResponse {
 }
 ```
 
+The extension's _identity_ is not a field it sets — there is no self-asserted `name`. The operator derives it from the verified token, so the extension cannot impersonate another. On handshake the operator:
+
+1. **Authenticates** the token with a `TokenReview` (`authentication.k8s.io`), passing the expected audience (`kuadrant-extensions`). A valid token yields the caller's username, `system:serviceaccount:<namespace>:<name>`, which becomes the extension identity.
+2. **Authorizes** the claimed `policy_kind` with a `SubjectAccessReview` (`authorization.k8s.io`) for that user: verb `register`, resource `policyregistrations` in group `extensions.kuadrant.io`, with `Name` set to the claimed policy kind. This is what binds an identity to the kind it may own — the check passes only if an admin granted that ServiceAccount the matching RBAC rule.
+
+`policyregistrations` is a _virtual_ resource: it has no CRD and nothing is ever persisted under it. It exists only as the RBAC coordinate the SAR is written against, so that "may this ServiceAccount register kind X" is expressible as an ordinary Kubernetes authorization rule (`resourceNames: ["X"]`). Custom verbs and `resourceNames` are both first-class in RBAC — Kubernetes itself uses this pattern for the `bind` and `escalate` verbs on `roles`/`clusterroles`.
+
 On a successful handshake the operator generates a random session token and records it in memory against the extension's identity. The extension attaches this token as gRPC metadata (`x-kuadrant-session`) on every subsequent call. A server-side interceptor enforces the rule on every RPC: `Handshake` is always allowed; every other RPC requires a valid session token or is rejected with `Unauthenticated`. The interceptor makes the authenticated identity available to downstream handlers.
 
 The session token, rather than the connection itself, is the unit of authentication. This is deliberate: gRPC transparently re-establishes the underlying TCP connection, and a token that survives reconnection lets a brief network blip resolve without forcing a full re-handshake. Concretely, a transport-level reconnection that still presents a valid token continues the _same_ session; a _new_ session is established only by a fresh `Handshake` — on first connect, or after the previous session was lost (operator restart, revocation, or a token that no longer validates). The re-sync described under [State synchronization](#state-synchronization) — re-reconciling every CR and pruning what is stale — is tied to that handshake, not to every TCP reconnect. The token map is in-memory only; if the operator restarts, every extension must re-handshake, which they will because their connections drop.
 
-Only one active session is permitted per extension name and per policy kind (first to register wins). Built-in extensions register before the endpoint accepts external connections, so they always claim their policy kinds first.
+Only one active session is permitted per identity and per policy kind (first to register wins). RBAC decides _who may_ claim a kind; single-claimant decides _who currently holds_ it. The ownership check and the session creation are one atomic step, so two handshakes racing for the same identity or the same policy kind cannot both succeed — exactly one wins and the other is rejected with a deterministic reason (the identity already holds a session, or the policy kind is already owned by another identity). A fresh handshake from an identity that already holds an active session is rejected on the same grounds: the operator neither returns the existing session nor replaces it, so a live session can never be hijacked by a second handshake. A new session for that identity is established only once the previous one has been lost (connection drop, revocation, or operator restart — see above). Built-in extensions register before the endpoint accepts external connections, so they always claim their policy kinds first.
 
 ## Authentication and credentials
 
-Authentication is a pre-shared key presented in the handshake. There are two credential sources, validated by the same path:
+For standalone extensions authentication uses Kubernetes as the trust root — there is no pre-shared key: the handshake carries a token and the operator asks the API server who it belongs to and what it may do. The handshake shape is the same for both kinds of extension (present a credential, receive a session token); only how that credential is validated differs:
 
-- **Standalone extensions** — the operator reads credentials from a Kubernetes Secret (default name `kuadrant-extension-auth`, configurable via `EXTENSION_AUTH_SECRET`) in its own namespace. Each data key is an extension name; each value is that extension's token. The operator watches the Secret, so additions, rotations, and removals take effect without a restart. Removing a key revokes any active session for that name; changing a key's value likewise revokes the session established with the old value, forcing a re-handshake with the new credential. Rotation on the extension side is a pod concern: because the extension typically receives its credential as a `secretKeyRef` environment variable, it only presents a rotated value after its pod is rolled out. Mounting the credential as a reloadable projected volume with in-process reload would avoid the restart, but is not required for tech preview.
-- **Built-in extensions** — the operator generates a random ephemeral token per extension at startup and passes it to the subprocess via environment variable. These tokens are never written to disk or to a Secret and are regenerated on every operator restart. They are registered in the same in-memory credential store as Secret-based tokens, so validation is identical.
+- **Standalone extensions** — the extension presents an audience-scoped ServiceAccount token, mounted as a projected volume (`serviceAccountToken` with `audience: kuadrant-extensions`). The kubelet issues and auto-rotates it before expiry, and the SDK re-reads the file each time it (re-)handshakes, so there is no `TokenRequest` API call in the extension's own code and nothing to rotate by hand. At handshake the operator runs a `TokenReview` with the expected audience to authenticate the token, then a `SubjectAccessReview` to authorize the claimed policy kind (see [Handshake protocol](#handshake-protocol)). Because the token is audience-bound, a token minted for some other service cannot be replayed against the extensions endpoint, and vice versa.
+- **Built-in extensions** — subprocesses of the operator, with no distinct identity to verify, so the operator vouches for them directly rather than running `TokenReview`/`SubjectAccessReview` against itself: it generates a random ephemeral credential per built-in at startup, passes it over the subprocess environment, and issues a session token on handshake as usual. The credential is never persisted, lives for one operator process, and only crosses `localhost`. Ownership of built-in kinds is therefore not RBAC-gated but guaranteed by order — built-ins claim their kinds before the endpoint accepts external connections, so a standalone extension can never take one.
 
-Credentials must be at least 32 bytes; shorter values are rejected at handshake time. No format is imposed (hex, base64, UUID, and raw bytes are all acceptable); documentation recommends `openssl rand -hex 32`.
+Ownership is not self-asserted. Authentication establishes _who_ the extension is (its ServiceAccount, from the verified token); authorization establishes _what_ it may claim (the `register` grant on the policy kind). An extension with a valid token but no matching RBAC grant is rejected — closing the gap where any credential holder could claim any unclaimed kind.
+
+Revocation follows Kubernetes semantics. Deleting the RBAC binding causes the next handshake to fail authorization; deleting or disabling the ServiceAccount invalidates its tokens at `TokenReview` time. Neither tears down an _established_ session immediately — a session lives in the operator's in-memory store until the connection drops or the operator restarts, at which point the extension must re-handshake and the revocation takes effect. Tightening this into prompt session revocation (for example, re-checking authorization periodically or on token expiry) is left as future hardening.
+
+The operator itself needs permission to run these reviews: `create` on `tokenreviews.authentication.k8s.io` and `subjectaccessreviews.authorization.k8s.io`. The built-in `system:auth-delegator` ClusterRole grants exactly this, so the operator's ServiceAccount is bound to it. This replaces the previous plan to grant the operator read access to a credential Secret — there is no such Secret any more.
 
 ## Session lifecycle
 
-A session begins at a successful handshake and ends when the connection is lost, the operator revokes it (for example on credential removal), or the operator restarts. Extensions retry the connection and re-handshake on failure, with **randomized backoff** so that a large number of extensions reconnecting at once — for example after an operator restart — do not all handshake at the same instant. gRPC keepalive lets both sides notice a dead peer promptly.
+A session begins at a successful handshake and ends when the connection is lost or the operator restarts. Because a re-handshake re-runs authentication and authorization, an RBAC or ServiceAccount change made while a session is live takes effect the next time the extension handshakes. Extensions retry the connection and re-handshake on failure, with **randomized backoff** so that a large number of extensions reconnecting at once — for example after an operator restart — do not all handshake at the same instant. gRPC keepalive lets both sides notice a dead peer promptly.
 
 Reconnecting is the easy part. The harder question is what state the two sides hold when they reconnect, and how it is made to agree again.
 
@@ -210,20 +258,20 @@ For the tech preview this gap is accepted. Core policies are unaffected; only ex
 
 ## Security considerations
 
-- Pre-shared keys live in a Kubernetes Secret governed by RBAC; only the operator's ServiceAccount and cluster admins should be able to read it.
-- For tech preview the endpoint is reachable only within the cluster and the mitigation for interception is in-cluster network controls. The credential is sent in the clear in the handshake request itself (the `credential` field of `HandshakeRequest`), which is the primary reason transport security is an open question (see below) rather than settled future work.
+- There is no long-lived shared secret to store or leak. Identity and ownership are decided by Kubernetes (`TokenReview` + `SubjectAccessReview`) against RBAC an admin controls, so authorizing an extension is auditable and revocable through ordinary cluster tooling.
+- The ServiceAccount token is short-lived and audience-bound (`kuadrant-extensions`), so it cannot be replayed against other services and its exposure window is small. It is still a **bearer** token, though: anyone who captures it can replay it against the extensions endpoint until it expires. For tech preview the endpoint is in-cluster only and the mitigation for interception is in-cluster network controls; adding TLS to the channel remains an open question (see below) precisely because the token crosses it in cleartext.
 - Built-in credentials are ephemeral and never persisted.
-- Session tokens are random and long enough to make guessing impractical; the minimum credential length prevents weak user-chosen keys.
+- Session tokens are random and long enough to make guessing impractical.
 - The interceptor denies every non-handshake RPC without a valid session, so the handshake cannot be bypassed.
 
 # Drawbacks
 
 [drawbacks]: #drawbacks
 
-- It introduces a network-reachable, authenticated surface where there was previously only a local socket, along with the credential management (a Secret, rotation, revocation) that comes with it.
-- A pre-shared key is weaker than mutual TLS, and the credential is transmitted without transport encryption in the tech-preview scope.
+- It introduces a network-reachable, authenticated surface where there was previously only a local socket, along with the RBAC an admin must set up (a ServiceAccount, a `register` grant per extension) to authorize each extension.
+- A bearer token over an unencrypted channel is weaker than mutual TLS: it is short-lived and audience-bound, but replayable until expiry, and it is transmitted without transport encryption in the tech-preview scope.
 - An operator restart briefly drops extension-contributed data from the data plane until each extension re-syncs (the accepted restart gap); core policies are unaffected, but this is a real, if short, window that only closes with the deferred hardening work.
-- Ownership shifts to the user. An extension is now a workload someone has to deploy, credential, and operate, rather than something that simply ships with the operator.
+- Ownership shifts to the user. An extension is now a workload someone has to deploy, authorize (a ServiceAccount and an RBAC grant), and operate, rather than something that simply ships with the operator.
 
 # Rationale and alternatives
 
@@ -231,9 +279,11 @@ For the tech preview this gap is accepted. Core policies are unaffected; only ex
 
 **Why a single shared TCP endpoint rather than keeping per-extension Unix sockets?** A Unix socket is local by construction and cannot serve a workload running in another pod, which is the whole point of standalone extensions. A single TCP server also collapses N near-identical per-extension servers into one implementation and one place to apply authentication and keepalive. The same endpoint serves both built-in and standalone extensions, so there is one code path to reason about.
 
-**Why a pre-shared key with a session token rather than mTLS from the start?** A pre-shared key in a Secret is simple to operate for a tech preview: generate a token, put it in a Secret, hand it to the extension. mTLS brings certificate issuance, rotation, and trust distribution, which is a larger investment than the tech-preview milestone requires. The session token exists so that authentication survives gRPC's transparent reconnection without a re-handshake on every blip. That said, transport security is genuinely on the table for this work rather than deferred indefinitely — see [Unresolved questions](#unresolved-questions).
+**Why ServiceAccount tokens and RBAC rather than a pre-shared key?** A pre-shared key means generating a secret, distributing it to both sides, and building rotation and revocation around it — and, on its own, it only proves _membership_, not _entitlement_: any holder of a valid key could claim any unclaimed policy kind. ServiceAccount tokens reuse machinery every cluster already has: the kubelet mints and rotates the token, `TokenReview` verifies it, and `SubjectAccessReview` against a virtual `policyregistrations` resource turns "which kind may this extension own" into an ordinary RBAC rule an admin writes and audits. That closes the entitlement gap and removes the shared secret entirely. The cost is that authorization is a Kubernetes concept an admin must configure (a ServiceAccount and a `register` grant), but that is standard controller-deployment work.
 
-**Why a handshake at all, rather than just a credential on each call?** The handshake gives a single point to establish identity and version, to enforce single-claimant-per-policy-kind, and to anchor state synchronization — it is where the extension declares the policies it owns (`owned_policies`) so the operator can prune stale state before the re-reconcile rebuilds the rest. Putting a credential on every call would authenticate requests but would not give us that reconnection anchor.
+**Why a session token on top of the ServiceAccount token?** The session token exists so that authentication survives gRPC's transparent reconnection without re-running `TokenReview`/`SubjectAccessReview` on every blip: a transport reconnect that still carries a valid session token continues the same session, and only a genuine session break forces a fresh handshake. mTLS from the start would bring certificate issuance, rotation, and trust distribution, a larger investment than the tech-preview milestone requires — but transport security is genuinely on the table rather than deferred indefinitely (see [Unresolved questions](#unresolved-questions)).
+
+**Why a handshake at all, rather than a token on each call?** The handshake gives a single point to authenticate, authorize the claimed kind, establish version, enforce single-claimant-per-policy-kind, and anchor state synchronization — it is where the extension declares the policies it owns (`owned_policies`) so the operator can prune stale state before the re-reconcile rebuilds the rest. Putting a token on every call would authenticate requests but would neither give us that reconnection anchor nor avoid a `TokenReview`/`SubjectAccessReview` per call.
 
 **Impact of not doing this.** Extensions stay confined to what the operator ships. Community authors have no supported way to deploy their own against a released operator, and the feature cannot progress past dev preview.
 
@@ -241,17 +291,23 @@ For the tech preview this gap is accepted. Core policies are unaffected; only ex
 
 [unresolved-questions]: #unresolved-questions
 
-- **Transport security (mTLS/TLS).** Currently scoped as in-cluster-only with the credential in cleartext. Whether to add TLS or mutual TLS as part of this work — rather than after it — is an open decision. mTLS would also let the client certificate carry identity, at which point the pre-shared key could become optional.
-- **Registration and discovery details.** How an operator learns which standalone extensions to expect, and the RBAC an extension workload needs, may warrant more definition as real extensions are deployed.
-- **NetworkPolicies.** The extension endpoint is reachable by any pod that can route to its Service, and for tech preview the credential crosses that link in cleartext. The outcome of the `NetworkPolicy` work in RFC022 should be taken into account, restricting which workloads may reach the extensions port — and, symmetrically, which peers the operator accepts connections from.
+- **Transport security (mTLS/TLS).** Currently scoped as in-cluster-only with the ServiceAccount token crossing the channel in cleartext. The token is short-lived and audience-bound, but replayable until expiry, so whether to add TLS or mutual TLS as part of this work — rather than after it — is an open decision. mTLS would let the client certificate carry identity as an alternative to (or defence in depth alongside) the token, which matters most for the out-of-cluster case where `TokenReview` may not be reachable.
+- **Prompt session revocation.** An RBAC or ServiceAccount change only takes effect on the next handshake; an established session outlives it. Whether to re-authorize periodically, on session-token expiry, or on a watch of the relevant RBAC objects is an open hardening question.
+- **Registration and discovery details.** How an operator learns which standalone extensions to expect may warrant more definition as real extensions are deployed. The RBAC an extension workload needs is now defined (a ServiceAccount plus a `register` grant on its policy kind), but conventions for packaging and naming those grants may still evolve.
+- **NetworkPolicies.** The extension endpoint is reachable by any pod that can route to its Service, and for tech preview the token crosses that link in cleartext. The outcome of the `NetworkPolicy` work in RFC022 should be taken into account, restricting which workloads may reach the extensions port — and, symmetrically, which peers the operator accepts connections from.
 - **Removing stale intra-policy bindings.** The additive write path (`AddDataTo` → `Set`, upstream registration → `SetUpstream`) never removes a binding dropped from a policy that still exists, so it lingers until the policy is cleared on delete. This is a pre-existing gap in the write model, independent of standalone extensions, but we would like to close it for tech preview. The leading candidate keeps writes firing immediately (preserving inline validation — `RegisterActionMethod` returns `ErrUpstreamUnreachable` at the call site): the SDK records the keys it writes for a policy during a reconcile and, on successful completion, sends one closing prune call listing the keys that should remain, and the operator drops the rest for that policy. It is fail-safe (a failed reconcile sends nothing, so nothing is pruned) and never opens a gap (the store holds a superset until the closing prune). The mechanism is not yet locked — the alternative, generalizing the atomic `PipelineCommit` model to the other write paths, changes those calls from fire-immediately to deferred-until-commit and moves error surfacing to commit time, which is why it is not the default choice.
 
 # Future possibilities
 
 [future-possibilities]: #future-possibilities
 
-- **Out-of-cluster extensions.** Nothing in this design should prevent an extension running outside the cluster; it would require exposing the endpoint (Ingress/LoadBalancer) and stronger transport security. This is explicitly left as future work.
+- **Out-of-cluster extensions.** Nothing in this design should prevent an extension running outside the cluster; it would require exposing the endpoint (Ingress/LoadBalancer) and stronger transport security. It would also need a different identity mechanism, since a workload outside the cluster has no projected ServiceAccount token — mTLS client certificates are the natural fit. This is explicitly left as future work.
 - **Closing the operator-restart gap.** Rather than accepting the brief window where extension contributions are absent after an operator restart, the operator could defer regenerating extension-touched managed resources until the owning extensions have re-applied their contributions — identifying those resources by a marker written when the resource is generated, so the existing resource keeps serving without any fragile merge of live state. Completion is read from the handshake `owned_policies` set: the hold releases once every owned policy contributing to a resource has re-reconciled, or a bounded timeout elapses for a genuinely absent extension.
-- **Authorization scoping.** Today a credential authorizes an extension _by name_, and the handshake only checks that the `policy_kind` it claims is not already owned — so any valid credential holder can claim any unclaimed kind; nothing binds a credential to a _specific_ authorized kind. A fuller model would constrain what an extension identity is permitted to do — not only which policy kind it may claim, but which operations it may perform and which resources it may read or affect. An extension is a privileged participant in the operator's reconciliation, so scoping what it can register, mutate, and observe is a natural next step. Binding credential to policy kind could be brought into tech preview if warranted.
+- **Finer-grained authorization scoping (GA work).** Binding an identity to the policy kind it may claim is handled in this design by the `register` SubjectAccessReview. That is deliberately coarse: it decides _whether_ an extension may participate for a given kind, not _what_ it may then do. A fuller model — expected as GA work rather than part of this tech preview — would constrain an extension's operations once connected, for example:
+  - which SDK methods it may call (e.g. permit `AddDataTo` but not upstream registration);
+  - which resources it may read or affect, and which specific resources it may modify, rather than trusting any connected extension with the full surface.
+
+  An extension is a privileged participant in the operator's reconciliation, so scoping this matters, but it is a substantial design in its own right. The virtual-resource + SAR pattern established here extends naturally to it (additional verbs, resources, or resourceNames checked at the relevant call sites rather than only at handshake), so this design is a foundation for that work rather than something it would need to replace.
+
 - **Multi-instance / HA extensions.** Allow more than one instance of the same extension for availability, with coordinated registration.
 - **HMAC or challenge-response credentials.** Replace opaque tokens with a scheme that resists replay.
