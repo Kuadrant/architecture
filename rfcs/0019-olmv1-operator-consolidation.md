@@ -134,6 +134,8 @@ The operator auto-creates a default `KuadrantControlPlane` CR named `default` on
 
 The CRD has no spec fields initially, all components are always deployed.
 
+**API Version:** The CRD is versioned as `v1alpha1` to reflect that the API is still evolving. Per-component `ManagementState` fields and other configuration options are planned for future iterations.
+
 ### Status
 
 ```yaml
@@ -146,7 +148,10 @@ status:
   components:
     - name: dns-operator
       ready: true
-      image: quay.io/kuadrant/dns-operator:latest
+      chartVersion: "0.0.0"
+      images:
+        - name: manager
+          image: quay.io/kuadrant/dns-operator:v0.8.0
       crds:
         - name: dnsrecords.kuadrant.io
           established: true
@@ -154,11 +159,52 @@ status:
           established: true
 ```
 
-The `Ready` condition reflects overall control plane health. Per-component status reports Deployment readiness, the deployed image reference, and CRD establishment state.
+The `Ready` condition reflects overall control plane health. Per-component status reports:
+- **Deployment readiness**: checked via the Deployment's `Available` condition (not replica counts)
+- **Chart version**: the Helm chart version deployed for this component
+- **Deployed images**: extracted from the actually-rendered Deployment manifests after post-render image patching, so status reflects what's actually running rather than env var defaults
+- **CRD establishment**: per-CRD establishment state
 
 ### Controller
 
 The KuadrantControlPlane controller is a standard controller-runtime reconciler, separate from the PolicyMachineryController (which handles data plane policies). Both run via the same controller-runtime manager. The controller watches child operator Deployments and CRDs via predicates, so status converges immediately when a Deployment becomes ready or a CRD is established. A periodic 5-minute resync provides drift reconciliation as a safety net.
+
+**Component deployment independence:** Components deploy independently during reconciliation. If one component fails to deploy, the controller continues attempting to deploy all other components rather than stopping at the first failure. All deployment errors are collected via `errors.Join()` and reported together in the reconcile error and status conditions, showing which specific components failed. This ensures partial failures don't prevent healthy components from running.
+
+### Kubernetes Events
+
+The operator emits Kubernetes Events (visible via `kubectl events` / `kubectl describe`) as a lightweight audit trail for control plane lifecycle events, supplementing the status conditions with human-readable transient occurrences:
+
+**Control plane lifecycle:**
+- `KuadrantControlPlaneCreated` — first install or recreation after deletion
+
+**Component lifecycle (per component):**
+- `ComponentInstalled` — initial installation with chart version
+- `ComponentVersionChanged` — chart version upgrade or downgrade
+- `ComponentDeployFailed` — deployment error (includes component name and error in message)
+
+**Dependency detection (one-time at startup):**
+- `CertManagerNotFound` — cert-manager CRDs not installed, TLSPolicy will not reconcile
+- `DNSOperatorNotFound` — dns-operator CRDs not installed (unused, as dns-operator is now embedded)
+- `LimitadorOperatorNotFound` — limitador-operator CRDs not installed, RateLimitPolicy will not reconcile
+- `AuthorinoOperatorNotFound` — authorino-operator CRDs not installed, AuthPolicy will not reconcile
+
+**OLM migration (one-time at startup, removed after 2-3 releases):**
+- `OLMMigrationComplete` / `OLMMigrationIncomplete` — aggregate cleanup summary
+- `OLMComponentCleaned` — per-component breakdown showing actual Subscription/CSV names removed and metadata stripped
+
+**Event deduplication:** Events use Kubernetes' built-in aggregation (counts repeated occurrences with the same event key). Per-component events use synthetic `related` object references (`Kind: "Component", Name: "<component-name>"`) to prevent events for different components from collapsing into a single event counter. The event key includes `(eventType, action, reason, reportingController, regarding, related)` but not the message text, so distinct `related` references keep component events separate even when they have the same reason and action.
+
+Example:
+```bash
+$ kubectl events --for kuadrantcontrolplane.kuadrant.io/default
+LAST SEEN   TYPE      REASON                        OBJECT                         MESSAGE
+62m         Warning   CertManagerNotFound           KuadrantControlPlane/default   cert-manager is not installed; TLSPolicy will not be reconciled
+61m         Normal    KuadrantControlPlaneCreated   KuadrantControlPlane/default   created default KuadrantControlPlane
+61m         Normal    OLMMigrationComplete          KuadrantControlPlane/default   stripped OLM metadata from 6 resources, deleted 1 Subscriptions and 1 CSVs
+61m         Normal    OLMComponentCleaned           KuadrantControlPlane/default   removed Subscription dns-operator and CSV dns-operator.v0.0.0 (stripped OLM metadata from 6 resources)
+61m         Normal    ComponentInstalled            KuadrantControlPlane/default   component dns-operator installed at version 0.0.0
+```
 
 ## Runtime rendering
 
@@ -183,8 +229,10 @@ The kuadrant-operator requires permissions to create and manage all child operat
 
 - **`apiextensions.k8s.io` CRDs**: unscoped `create`, `list`, `watch` (required because the resource may not exist yet, and the controller-runtime informer cache requires `list`/`watch` at cluster scope), plus `get`, `update`, `patch` scoped to specific child CRD names via `resourceNames`. This ensures the operator can only modify CRDs it manages while limiting the broad permissions to `create`, `list`, and `watch` only
 - **`rbac.authorization.k8s.io` ClusterRoles**: unscoped `create` (same reason as CRDs), plus `get`, `list`, `watch`, `update`, `patch`, `bind`, `escalate` scoped to specific child ClusterRole names via `resourceNames`
-- **`rbac.authorization.k8s.io` ClusterRoleBindings, Roles, RoleBindings**: standard CRUD to bind component SAs to their ClusterRoles
+- **`rbac.authorization.k8s.io` ClusterRoleBindings**: unscoped `create`, plus `delete`, `get`, `list`, `watch`, `update`, `patch` scoped to specific child ClusterRoleBinding names via `resourceNames`
+- **`rbac.authorization.k8s.io` Roles, RoleBindings**: standard CRUD to bind component SAs to their ClusterRoles (namespace-scoped)
 - **`apps` Deployments, core resources**: standard CRUD for component controllers
+- **Events**: `create`, `patch` on both core Events (`apiGroups: [""]`) and the new Events API (`apiGroups: ["events.k8s.io"]`). Both API groups are required because `GetEventRecorder()` uses the `events.k8s.io/v1` API, not the legacy core `v1` Events
 
 The `escalate` verb on ClusterRoles is required because child operator ClusterRoles grant permissions (e.g. access to AuthConfig resources) that the kuadrant-operator itself does not hold. Without `escalate`, Kubernetes RBAC prevents creating a ClusterRole with rules the creator doesn't already have. The `bind` verb on ClusterRoles is also required because the charts render ClusterRoleBindings that reference those ClusterRoles. Without `bind`, Kubernetes RBAC prevents creating a binding to a ClusterRole whose permissions you don't hold.
 
@@ -258,6 +306,11 @@ On startup, the upgraded kuadrant-operator:
 3. The KuadrantControlPlane controller deploys child operator controllers from embedded Helm charts, with `app.kubernetes.io/managed-by: kuadrant-operator` stamped on all resources
 4. Detects and removes orphaned child operator Subscriptions and CSVs programmatically
 5. Strips stale OLM labels (`olm.*`, `operators.coreos.com/*`) and CSV `ownerReferences` from all resources previously owned by orphaned child operator CSVs. Resources are discovered dynamically via `olm.owner` and `operators.coreos.com/<package>.<namespace>` label selectors, no hardcoded resource type list
+
+**OLM cleanup hardening:**
+- Subscription and CSV deletion is gated on successful metadata stripping. If metadata removal fails partway through, orphaned resources won't be cascade-deleted by removing their owning CSV
+- `Forbidden` errors during metadata stripping are skipped rather than failing the entire cleanup, allowing migration to proceed even when the operator lacks permission to modify certain OLM-owned resources
+- Per-component events (`OLMComponentCleaned`) report the actual Subscription and CSV names removed for each component, providing detailed audit trail beyond the aggregate summary
 
 The OLM cleanup runs once at startup (not during reconciliation) and is designed to be removed after 2-3 releases, once all users have upgraded past the consolidation release.
 
