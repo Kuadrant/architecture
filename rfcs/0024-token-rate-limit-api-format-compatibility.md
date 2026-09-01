@@ -3,7 +3,7 @@
 - Feature Name: `token_rate_limit_api_format_compatibility`
 - Status: Draft
 - Start Date: 2026-08-27
-- RFC PR: TBD
+- RFC PR: <https://github.com/Kuadrant/architecture/pull/199>
 - Issue tracking: <https://github.com/Kuadrant/kuadrant-operator/issues/1864>
 - Related: [RFC 0013 (AI policies)](./0013-ai-policies.md), [RFC 0021 (Token rate limit reservations)](./0021-token-rate-limit-reservations.md), [kuadrant-operator#1864](https://github.com/Kuadrant/kuadrant-operator/issues/1864)
 
