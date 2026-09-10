@@ -83,13 +83,19 @@ There's also no `dataExtraction.request` today. Token usage is exclusively a res
 
 ### Why `totalTokens` only, for now
 
-The field is named `totalTokens`, not `tokens` or `usage`, deliberately. This RFC carries exactly one number end to end, the same one `hits_addend` has always carried, and does not attempt to sum `input_tokens + output_tokens` for providers (like Anthropic) that have no native total field. A policy targeting an Anthropic-only backend can point `dataExtraction.response.totalTokens` at `/usage/output_tokens` if that approximation is good enough for its purposes, but computing a true sum is deferred; see [Future possibilities](#future-possibilities) for why the API is still shaped to support it later without a breaking change.
+The field is named `totalTokens`, not `tokens` or `usage`, deliberately. This RFC carries exactly one number end to end, the same one `hits_addend` has always carried, and does not attempt to sum `input_tokens + output_tokens` for providers (like Anthropic) that have no native total field. A policy targeting an Anthropic-only backend can point `dataExtraction.response.totalTokens` at `/usage/output_tokens` as an interim workaround, but this under-counts, it is not an approximation: input tokens are omitted entirely, and they routinely dominate the total in long-context usage, so a limit set this way isn't a real limit on total usage. Computing a true sum is deferred; see [Future possibilities](#future-possibilities) for why the API is still shaped to support it later without a breaking change, and why that follow-up, not this workaround, is what makes an Anthropic-fronting policy actually meterable.
 
 ### Streaming responses
 
 No configuration is needed to make this work for SSE (`text/event-stream`) responses. The same `dataExtraction.response.totalTokens` pointer list applies unchanged, whether the response is a single JSON object or a stream of `data:` events. Internally, wasm-shim uses a different, provider-agnostic algorithm to locate the right event in a stream (see [Reference-level explanation](#reference-level-explanation)); that algorithm needs no per-provider knowledge or configuration, which is why there's no separate "streaming pointers" field.
 
 One consequence of sharing a single list across both forms: some providers put the value at different paths depending on whether the response is streamed or not (OpenAI's Responses API is one, see [Built-in defaults](#built-in-defaults)). Nothing here infers one shape from the other, so both paths need their own entry in the list.
+
+This mechanism can only extract usage that the upstream response actually contains. For OpenAI Chat Completions streams specifically, the usage chunk is only emitted if the client requested it via `stream_options: {"include_usage": true}`; without that opt-in, no pointer list recovers a value the provider never sent.
+
+### When no candidate resolves
+
+If none of the configured pointers resolve, the request is allowed through and simply isn't counted for that response; it is not blocked. This is today's existing default behavior, unchanged by this RFC, and it's a control-plane-wide setting, not something a policy configures: an operator deployment can toggle it to fail closed instead via an environment variable, if that's the desired posture for their cluster. Because a fail-open miss is otherwise silent, it must be observable; see [Observability of extraction misses](#observability-of-extraction-misses).
 
 ## Migration
 
@@ -191,6 +197,10 @@ Two phases, on different data structures.
 
 Accepting the list argument at the function level is not, by itself, sufficient: the static analysis that walks a CEL expression ahead of evaluation, to decide which body fields it depends on before any body bytes have arrived, has to separately learn to recognize a list-literal argument the same way it recognizes a single string literal today. Without that, a list-argument call would be invisible to that analysis, no body dependency would be registered for it, and the field would silently never be looked for at all.
 
+### What counts as "resolves"
+
+A candidate pointer is considered resolved if it dereferences to a JSON `number`, or to a JSON `string` that parses in full as a number (e.g. `"150"` -> `150`; leading/trailing whitespace, empty strings, and any non-numeric content make the parse fail). Anything else, a missing path, `null`, a non-numeric string, an object, an array, or a boolean, is treated identically to "this candidate didn't match," and evaluation proceeds to the next candidate in the list.
+
 ### Non-streaming: `JsonBodyParser`
 
 Today, `JsonBodyParser` registers one `acutejson` callback per requested field, keyed by that field's single pointer string. This RFC changes what "a requested field" means: a field is now identified by its **ordered list** of candidate pointers, and `JsonBodyParser` registers a callback for every pointer in every field's list (same as today, just more of them, since the underlying `acutejson` engine already supports registering an arbitrary number of pointers and firing whichever ones the document happens to contain). What changes is `finalize_extracted()`: instead of "this field's pointer either matched or it didn't," it now picks, per field, the **highest-priority pointer (by configured order) that actually matched**. A match on the field's second candidate is only used if the first candidate never fired during the parse. This requires no change to the streaming/incremental nature of the parser: extra pointers only add more registered callbacks over the same single forward pass, not multiple passes.
@@ -201,12 +211,18 @@ This isn't just a parser fix, though. The same "must all match" assumption also 
 
 The current implementation's "look at the second-to-last event" heuristic is removed entirely, since it's specifically an [OpenAI Chat Completions streaming][openai-chat-streaming]-convention assumption and produces wrong results for [Anthropic][anthropic-messages-streaming] (no terminal sentinel; usage split across two named events), wrong results for [Gemini][gemini-generate-content] (usage is withheld from every chunk except the true last one, and there's no terminal sentinel after it), and doesn't generalize to OpenAI's own [Responses API][openai-responses-streaming] (named events, not bare `data:` chunks). It's replaced with one strategy that needs no knowledge of *which* provider or event-naming convention is in play, and in particular no need to detect named vs. unnamed events at all:
 
-1. For every field being extracted, precompute the leaf-key substring of each of its candidate pointers (e.g. `/usage/total_tokens` -> `"total_tokens"`, quotes included).
+1. For every field being extracted, precompute the leaf-key substring of each of its candidate pointers, including both the opening and closing quote characters around the key (e.g. `/usage/total_tokens` -> the literal 14-character string `"total_tokens"`, not the bare word). Requiring both quote delimiters, not just showing the key as a string, is deliberate: it's what stops one key from spuriously matching as a substring of an unrelated, longer key that happens to end the same way (e.g. `input_tokens` is a suffix of Anthropic's `cache_read_input_tokens`, but `"input_tokens"`, quote-bounded, is not found inside `"cache_read_input_tokens"`, since the character preceding the shared suffix is `_`, not `"`).
 2. As each SSE event is dispatched (after full event-framing via the existing `EventParser`/`sse_line_parser` machinery, which is unchanged), do a cheap `str::contains` scan of the event's raw `data` string against every precomputed leaf-key substring. This is *not* a JSON parse, just a substring search.
 3. If no leaf key matches, discard the event's data and move to the next event. This is the common case and is why this stays cheap: the overwhelming majority of events in a real completion stream (content deltas, ids, pings) contain none of the configured keys and are never parsed as JSON.
 4. If a leaf key matches, parse *that one event's* `data` as JSON and walk the matching field's candidate pointers in priority order; the first one that resolves is the field's new value.
 5. Overwrite, don't stop. Matching once doesn't end extraction for that field. A later event can still replace the value, so a provider that progressively updates the same candidate across events is handled correctly. But a later lower priority event must not overwrite an earlier, higher-priority candidate's value just because it arrived later; priority order still wins over recency.
 6. At end-of-stream, if none of the candidates resolved, the task fails. Exactly as today's single-pointer case does when its one pointer never resolves.
+
+### Observability of extraction misses
+
+When no candidate resolves, the wasm-shim task for the response-phase report action (`wasm.RateLimitReportServiceName`) fails. That service's `FailureMode` defaults to `Allow` (`RatelimitReportServiceFailureMode` in kuadrant-operator), so the request proceeds and the increment is simply skipped; an operator deployment can override this to `Deny` via the `RATELIMIT_REPORT_SERVICE_FAILURE_MODE` env var. This is existing behavior, unchanged by this RFC.
+
+Because the default is fail-open, a miss produces no blocked request and no error surfaced to the caller, only an uncounted response, so it must be observable some other way. wasm-shim emits a distinct log line (or metric, if one is already emitted for task failures) for "no candidate resolved for field X," separate from other causes of task failure, so this specific condition is diagnosable without silently persisting until it shows up as a billing or capacity discrepancy days later.
 
 ## `limitador`
 
@@ -236,7 +252,6 @@ No changes. Limitador has no knowledge of LLM response formats, JSON, or "tokens
 
 # Unresolved questions
 
-- **Fail open vs. fail closed when no candidate resolves.** Today, an unmatched extraction field causes the wasm-shim task to fail, which in turn is subject to whatever `failureMode` the calling action's service is configured with. This RFC preserves that behavior unchanged, consistent with "keep the current token rate limiting behavior as is": if none of the configured candidates resolve, the same failure path triggers as it would today for the single hardcoded pointer. The [kuadrant-operator#1864](https://github.com/Kuadrant/kuadrant-operator/issues/1864) research notes recommend the opposite default specifically for this case: log a warning and skip the rate-limit increment (fail open), on the reasoning that blocking traffic because a response came from an unrecognized format is worse than under-counting once. Whether to change that default behavior is a real, separate decision this RFC does not make.
 - RFC 0021 separately notes that a smarter default `reservation.amount` (derived from the request's own `max_tokens`-equivalent field) is blocked on `requestBodyJSON` not being usable at `Reserve` time, not on the extraction mechanism itself. This RFC's ordered-candidate-list primitive would be a natural fit for that once the underlying body-availability-at-`Reserve`-time question resolves, tracked in [CONNLINK-1608](https://redhat.atlassian.net/browse/CONNLINK-1608), but doing so is not part of this RFC's scope. `DataExtraction` today only has a `response` side, deliberately, since `totalTokens` has no legitimate request-side source; see [Future possibilities](#future-possibilities) for where a `request` side would go.
 
 # Future possibilities
