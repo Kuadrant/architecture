@@ -21,14 +21,144 @@ Kuadrant provides connectivity, security and service protection capabilities in 
 
 ## 10000m Architecture
 
-![](./images/highest-level.jpg)
+```mermaid
+---
+config:
+  layout: dagre
+  fontFamily: Arial
+---
+flowchart LR
+    subgraph Clusters["Cluster(s)"]
+        direction TB
+        subgraph ControlPlane["Kuadrant Control Plane"]
+            direction LR
+            PolicyControllers["<b>Policy<br/>Controllers</b>"]
+            PolicyCRDs["<b>Policy CRDs</b><br/>DNS<br/>TLS<br/>RateLimits<br/>Auth"]
+        end
+        Gateway{{"Gateway"}}
+        subgraph DataPlane["Kuadrant Data Plane"]
+            direction LR
+            PolicyEnforcement["<b>Policy<br/>Enforcement</b>"]
+            EnforcementCRDs["<b>Enforcement<br/>CRDs</b><br/>Auth<br/>RateLimits<br/>DNSRecords<br/>Certificates"]
+        end
+    end
+
+    subgraph Providers[" "]
+        direction LR
+        AuthProvider(["Auth<br/>Provider"])
+        TLS(["TLS"])
+        DNS(["DNS"])
+        AuthProvider ~~~ TLS ~~~ DNS
+    end
+
+    PolicyControllers ~~~ PolicyEnforcement
+    ControlPlane ~~~ DataPlane
+
+    PolicyControllers -- reconcile --> PolicyCRDs
+    PolicyControllers -- create ---> EnforcementCRDs
+    Gateway <-->|configure| PolicyControllers
+    Gateway <-->|enforce| PolicyEnforcement
+    PolicyEnforcement -- reconcile --> EnforcementCRDs
+    PolicyEnforcement -- integrate --> AuthProvider
+    PolicyEnforcement -- integrate --> TLS
+    PolicyEnforcement -- integrate --> DNS
+
+    classDef policy fill:#f3d9fe,stroke:#666666,color:#2f3237
+    classDef crd fill:#ffffff,stroke:#666666,color:#2f3237
+    classDef gw fill:#7c838d,stroke:#43474e,color:#1f2226
+    classDef external fill:#ffffff,stroke:#43474e,color:#2f3237
+    class PolicyControllers,PolicyEnforcement policy
+    class PolicyCRDs,EnforcementCRDs crd
+    class Gateway gw
+    class AuthProvider,TLS,DNS external
+    style Clusters fill:#f2f3f5,stroke:#666666
+    style ControlPlane fill:#dfe2e7,stroke:#666666
+    style DataPlane fill:#dfe2e7,stroke:#666666
+
+    style Providers fill:transparent,stroke:transparent
+    %% Preserve the original arrow direction while ranking its target first.
+    linkStyle 6,7 marker-end:none
+
+    Clusters ~~~ Providers
+```
 
 
 ### Control Plane Components and Responsibilities
 
 The control plane is a set of controllers and operators that are responsible for installation and configuration of other components such as the data plane enforcement components and configuration of the Gateway to enable the data plane components to interact with incoming requests. The control plane also owns and reconciles the policy CRD APIs into more complex and specific configuration objects that the policy enforcement components consume in order to know the rules to apply to incoming requests or the configuration to apply to external integrations such as DNS and ACME providers. 
 
-![](./images/control-plane-overview.jpg)
+```mermaid
+---
+config:
+  layout: dagre
+  fontFamily: Arial
+---
+flowchart TB
+    TLS(["TLS"]):::cloud
+    DNS(["DNS"]):::cloud
+
+    subgraph KCP["Kuadrant Control Plane"]
+        direction TB
+        KuadrantCRD["Kuadrant<br/>CRD"]:::whiteBox
+        KuadrantOperator["Kuadrant<br/>Operator"]:::tealBox
+        CertificateCRD["Certificate<br/>CRD"]:::whiteBox
+        LimitadorCRD["Limitador<br/>CRD"]:::whiteBox
+        AuthorinoCRD["Authorino<br/>CRD"]:::whiteBox
+        DNSRecordCRD["DNSRecord<br/>CRD"]:::whiteBox
+
+        subgraph POLICIES["Policy APIs"]
+            direction TB
+            AuthPolicy["AuthPolicy"]:::whiteBox
+            DNSPolicy["DNSPolicy"]:::whiteBox
+            RateLimitPolicy["RateLimitPolicy"]:::whiteBox
+            TLSPolicy["TLSPolicy"]:::whiteBox
+            AuthPolicy ~~~ DNSPolicy ~~~ RateLimitPolicy ~~~ TLSPolicy
+        end
+
+        subgraph DEPS["Dependencies"]
+            CertManager["Cert<br/>Manager"]:::tealBox
+            LimitadorOperator["Limitador<br/>Operator"]:::tealBox
+            AuthorinoOperator["Authorino<br/>Operator"]:::tealBox
+            DNSOperator["DNS<br/>Operator"]:::tealBox
+        end
+    end
+
+    %% invisible edges for layout only: clouds above the control plane,
+    %% Kuadrant CRD beside the operator, dependency operators below the
+    %% CRDs they reconcile (as in the source image)
+    TLS ~~~ KuadrantOperator
+    DNS ~~~ KuadrantOperator
+    DNS ~~~ AuthPolicy
+    KuadrantCRD ~~~ CertificateCRD
+    CertificateCRD ~~~ CertManager
+    LimitadorCRD ~~~ LimitadorOperator
+    AuthorinoCRD ~~~ AuthorinoOperator
+    DNSRecordCRD ~~~ DNSOperator
+
+    KuadrantOperator -->|reconcile| KuadrantCRD
+    KuadrantOperator -->|create| CertificateCRD
+    KuadrantOperator -->|create| LimitadorCRD
+    KuadrantOperator -->|create| AuthorinoCRD
+    KuadrantOperator -->|create| DNSRecordCRD
+    KuadrantOperator -->|trigger install| DEPS
+    CertManager --> CertificateCRD
+    LimitadorOperator --> LimitadorCRD
+    AuthorinoOperator --> AuthorinoCRD
+    DNSOperator --> DNSRecordCRD
+    TLS <--> CertManager
+    DNS <--> DNSOperator
+    KuadrantOperator --> POLICIES
+
+    classDef tealBox fill:#12cdd4,stroke:#1f2937,color:#1f2937
+    classDef whiteBox fill:#ffffff,stroke:#1f2937,color:#1f2937
+    classDef cloud fill:#ffffff,stroke:#1f2937,color:#1f2937
+    style KCP fill:#dfe2e7,stroke:#9ca3af,color:#374151
+    style DEPS fill:transparent,stroke:#1f2937,stroke-dasharray:5 5,color:#1f2937
+    style POLICIES fill:transparent,stroke:#1f2937,stroke-dasharray:5 5,color:#1f2937
+
+    %% Preserve the original arrow direction while ranking its target first.
+    linkStyle 21,22 marker-end:none
+```
 
 #### [Kuadrant Operator](https://github.com/Kuadrant/Kuadrant-operator)
 * Installation and configuration of other control plane components
@@ -52,7 +182,83 @@ AWS, Azure and Google DNS are our main targets.
 
 ### Data Plane Components and Responsibilities
 
-![](./images/data-plane-overview.jpg)
+```mermaid
+---
+config:
+  layout: dagre
+  fontFamily: Arial
+---
+flowchart RL
+    EXTAUTH(["External<br/>Auth"])
+
+    subgraph KDP["Kuadrant Data Plane"]
+        direction TB
+        subgraph CPM["Control Plane Managed"]
+            direction LR
+            subgraph EC["Enforcement Configuration"]
+                direction LR
+                AUTHCONFIG("AuthConfig<br/>CRD")
+                LIMITSCONFIG("Limits<br/>Config")
+            end
+            subgraph GC["Gateway Configuration"]
+                direction LR
+                WASMPLUGIN("WASMPlugin")
+                SECRET("Secret<br/>(TLS Cert)")
+            end
+        end
+        AUTHORINO("Authorino")
+        LIMITADOR("Limitador")
+        BACKEND{"backend"}
+        subgraph ENVOY["Envoy"]
+            WASM{{"wasm"}}
+        end
+    end
+
+    LB("Load Balancer")
+    CLIENT((" "))
+
+    WASMPLUGIN --> EC
+    WASMPLUGIN --> ENVOY
+    SECRET --> ENVOY
+    AUTHORINO --> AUTHCONFIG
+    LIMITADOR --> LIMITSCONFIG
+    WASM --> AUTHORINO
+    WASM --> LIMITADOR
+    KDP --> EXTAUTH
+    CLIENT --- LB
+    LB ---|request| ENVOY
+    ENVOY --> BACKEND
+
+    style KDP fill:#DFE2E7,stroke:#666666
+    style CPM fill:none,stroke:#333333,stroke-dasharray:5 5
+    style EC fill:none,stroke:#333333,stroke-dasharray:5 5
+    style GC fill:none,stroke:#333333,stroke-dasharray:5 5
+    style ENVOY fill:#CBCCD0,stroke:#333333,stroke-dasharray:5 5
+    style WASM fill:#CAD591,stroke:#333333,stroke-dasharray:5 5
+    style AUTHCONFIG fill:#FFFFFF,stroke:#333333
+    style LIMITSCONFIG fill:#FFFFFF,stroke:#333333
+    style WASMPLUGIN fill:#FFFFFF,stroke:#333333
+    style SECRET fill:#FFFFFF,stroke:#333333
+    style AUTHORINO fill:#12CDD4,stroke:#333333
+    style LIMITADOR fill:#12CDD4,stroke:#333333
+    style BACKEND fill:#E6E6E6,stroke:#333333,stroke-dasharray:5 5
+    style EXTAUTH fill:#FFFFFF,stroke:#666666
+    style LB fill:#FFFFFF,stroke:#333333,stroke-dasharray:5 5
+    style CLIENT fill:#FFFFFF,stroke:#333333,stroke-dasharray:5 5
+
+    linkStyle 1 stroke:#333333,stroke-width:2px
+    linkStyle 2 stroke:#333333,stroke-width:2px
+    linkStyle 5 stroke:#E8C34A,stroke-width:2px
+    linkStyle 6 stroke:#E8C34A,stroke-width:2px
+    linkStyle 8 stroke:#82B366,stroke-width:2px,marker-end:none
+    linkStyle 9 stroke:#82B366,stroke-width:2px,marker-end:none
+    linkStyle 10 stroke:#82B366,stroke-width:2px
+
+    LIMITSCONFIG ~~~ AUTHCONFIG
+    SECRET ~~~ WASMPLUGIN
+
+    AUTHORINO ~~~ EXTAUTH
+```
 
 The data plane components sit in the request flow and are responsible for enforcing configuration defined by policy and providing service protection capabilities based on configuration managed and created by the control plane.
 
@@ -70,7 +276,113 @@ The data plane components sit in the request flow and are responsible for enforc
 
 In a single cluster, you have the Kuadrant control plane and data plane sitting together. It is configured to integrate with Gateways on the same cluster and configure a DNS zone via a  secret (configured alongside a DNSPolicy). Storage of rate limit counters is possible but not required as they are not being shared.
 
-![](./images/single-cluster-layout.jpg)
+```mermaid
+---
+config:
+  layout: dagre
+  fontFamily: Arial
+  themeCSS: '.cluster-label div { max-width: none !important; width: max-content !important; white-space: nowrap !important; }'
+---
+flowchart TB
+    STORAGE[("Storage  (optional)<br/>(Redis/Elasticache)")]
+
+    subgraph OUTER["Kuadrant  - Components and Layout"]
+        direction TB
+        subgraph CLUSTER["Cluster"]
+            direction TB
+            subgraph KSNS["Kuadrant System (NS)"]
+                direction TB
+                KUADRANT["Kuadrant"]
+                KOP["Kuadrant<br/>Operator<br/>(policy controller)"]
+                subgraph DEPS["Dependencies"]
+                    direction LR
+                    LIMOP["Limitador<br/>Operator"]
+                    DNSOP["DNS<br/>Operator"]
+                    AUTHOP["Authorino<br/>Operator"]
+                end
+                subgraph LIMITADOR["Limitador"]
+                    direction TB
+                    LIMITSCM["Limits (CM)"]
+                end
+                AUTHORINO["Authorino"]
+                CERTMGR["Cert<br/>Manager"]
+            end
+            subgraph GWNS["&lt;gateway/HTTPRoute ns&gt;"]
+                direction TB
+                subgraph POLICYCRS["Policy CRs"]
+                    direction TB
+                    AUTHPOL["Auth Policy"]
+                    RLPOL["RateLimit<br/>Policy"]
+                    DNSPOL["DNS<br/>Policy"]
+                    TLSPOL["TLS<br/>Policy"]
+                end
+                subgraph ENFCRS["Enforcement CRs"]
+                    direction LR
+                    LIMITADORCR["Limitador"]
+                    DNSRECORD["DNS<br/>Record"]
+                    AUTHCONFIG["Auth<br/>Config"]
+                    CERTIFICATE["Certificate"]
+                end
+                subgraph INTCRS["Integration CRS"]
+                    direction LR
+                    WASMPLUGIN["WASMPlugin/EnvoyFilter<br/>(Istio)"]
+                    PATCHPOL["PatchPolicy/ExtensionPolicy/SecurityPolicy<br/>(Envoy Gateway)"]
+                end
+                subgraph GW["Gateway / HTTPRoute"]
+                    direction TB
+                    WASM["wasm"]
+                end
+            end
+        end
+    end
+
+    KUADRANT <-->|reconcile| KOP
+    KOP -- install --> DEPS
+    LIMOP -- Install --> LIMITADOR
+    LIMOP -- config --> LIMITSCM
+    LIMOP -- Reconcile --> LIMITADORCR
+    DNSOP -- Reconcile --> DNSRECORD
+    AUTHOP -- install --> AUTHORINO
+    AUTHORINO -- Reconcile --> AUTHCONFIG
+    CERTMGR -- Reconcile --> CERTIFICATE
+    STORAGE <--> LIMITADOR
+    KOP -- Reconcile --> POLICYCRS
+    KOP -- create --> ENFCRS
+    KOP -- Configure --> GW
+    POLICYCRS -- target --> GW
+    INTCRS --> GW
+    KSNS ~~~ GWNS
+    ENFCRS ~~~ INTCRS
+
+    classDef teal fill:#19C9D4,stroke:#000000,color:#000000
+    classDef whiteBox fill:#FFFFFF,stroke:#000000,color:#000000
+    classDef wasmBadge fill:#DDE5B2,stroke:#333333,color:#000000,stroke-dasharray:3 3
+    class KOP,LIMOP,DNSOP,AUTHOP,AUTHORINO,CERTMGR teal
+    class KUADRANT,LIMITSCM,AUTHPOL,RLPOL,DNSPOL,TLSPOL,LIMITADORCR,DNSRECORD,AUTHCONFIG,CERTIFICATE,WASMPLUGIN,PATCHPOL,STORAGE whiteBox
+    class WASM wasmBadge
+    style GW fill:#FFFFFF,stroke:#000000,color:#000000
+    style OUTER fill:#CCCCCC,stroke:#444444,stroke-dasharray:8 5
+    style CLUSTER fill:#FFFFFF,stroke:#444444,stroke-dasharray:8 5
+    style KSNS fill:#E6E6E6,stroke:#333333
+    style GWNS fill:#E6E6E6,stroke:#333333
+    style DEPS fill:#F0F0F0,stroke:#333333,stroke-dasharray:8 5
+    style POLICYCRS fill:#F5F5F5,stroke:#333333,stroke-dasharray:8 5
+    style ENFCRS fill:#F5F5F5,stroke:#333333,stroke-dasharray:8 5
+    style INTCRS fill:#F5F5F5,stroke:#333333,stroke-dasharray:8 5
+    style LIMITADOR fill:#19C9D4,stroke:#000000,color:#000000
+
+    %% Preserve arrow direction while ranking these targets first.
+    linkStyle 0,9 marker-end:none
+
+    AUTHPOL ~~~ DNSPOL
+    RLPOL ~~~ TLSPOL
+
+    LIMITADOR ~~~ POLICYCRS
+    CERTMGR ~~~ GW
+
+    STORAGE ~~~ KUADRANT
+    CERTIFICATE ~~~ GW
+```
 
 
 ### Multi-Cluster 
@@ -79,7 +391,169 @@ In the default multi-cluster setup, each individual cluster has Kuadrant install
 Multi cluster DNS is achieved by using the eventual provider DNS service (AWS Route etc ..) as a store for ownership metadata using specially created TXT records, and as a central API service that all clusters can communicate with. The zone is operated on independently by each of DNS operator on both clusters to form a single cohesive record set. Each cluster processes its own DNSRecords, becoming aware of other DNSRecords contributing to the same set of endpoints via this centrally stored data, in turn allowing it to correctly translate the DNSRecord endpoints into an appropriate API operation. More details on this can be found in the [following RFC](https://github.com/Kuadrant/architecture/pull/70).
 The rate limit counters can also be shared and used by different clusters in order to provide global rate limiting. This is achieved by connecting each instance of Limitador to a shared data store that uses the Redis protocol.
 
-![](./images/multi-cluster-layout.jpg)
+```mermaid
+---
+config:
+  layout: dagre
+  fontFamily: Arial
+  themeCSS: '.cluster-label div { max-width: none !important; width: max-content !important; white-space: nowrap !important; }'
+  flowchart:
+    wrappingWidth: 700
+---
+flowchart LR
+    subgraph OUTER["Kuadrant  - Multi Cluster (with multi-cluster DNS)"]
+        direction LR
+        subgraph C2["Cluster 2  (US)"]
+            direction TB
+            KO2("Kuadrant Operator<br/><br/>- Gateway Integration<br/>- Policy Controller")
+            subgraph PEC2[" "]
+                PEC2_HEADER["Policy Enforcement<br/>Components"]
+                direction TB
+                LIM2("Limitador")
+                CM2("Cert Manager")
+                AUT2("Authorino")
+                DNSO2("DNS Operator")
+            end
+            subgraph PCR2["Policy CRs"]
+                direction TB
+                DP2["DNSPolicy"]
+                TP2["TLSPolicy"]
+                RLP2["RateLimitPolicy"]
+                AP2["AuthPolicy"]
+            end
+            BK2{"Backend<br/>k8s<br/>service"}
+            subgraph GW2["Gateway"]
+                direction TB
+                WASM2[\Wasm/]
+            end
+        end
+        subgraph KSC["Kuadrant - Single Cluster"]
+            direction TB
+            subgraph C1["Cluster 1 (EU)"]
+                direction TB
+                KO1("Kuadrant Operator<br/><br/>- Gateway Integration<br/>- Policy Controller")
+                subgraph PCR1["Policy CRs"]
+                    direction TB
+                    DP1["DNSPolicy"]
+                    TP1["TLSPolicy"]
+                    RLP1["RateLimitPolicy"]
+                    AP1["AuthPolicy"]
+                end
+                subgraph PEC1["Policy Enforcement Components"]
+                    direction TB
+                    LIM1("Limitador")
+                    CM1("Cert Manager")
+                    AUT1("Authorino")
+                    DNSO1("DNS Operator")
+                end
+                BK1{"Backend<br/>k8s<br/>service"}
+                subgraph GW1["Gateway"]
+                    direction TB
+                    WASM1[\Wasm/]
+                end
+            end
+            LB1["Load Balancer"]
+        end
+        LB2["Load Balancer"]
+        STOR[("Storage")]
+        ACME("ACME<br/>Provider")
+        AUTHP("Auth Provider")
+        DNSP("DNS Provider")
+        ZONE>"zone"]
+    end
+
+    CEU(("client<br/>(EU)"))
+    CUS(("client<br/>(US)"))
+
+    %% Keep the DNS records in their original five-column table.
+    DOC["<b>2 cluster load balanced record set<br/>DNS Zone (different geo)</b><br/><table style='border-collapse:collapse;font-size:12px'><tr style='background-color:#ffffff'><th style='border:1px solid #cccccc;padding:5px;text-align:left'>Record</th><th style='border:1px solid #cccccc;padding:5px;text-align:left'>Type</th><th style='border:1px solid #cccccc;padding:5px;text-align:left'>routing</th><th style='border:1px solid #cccccc;padding:5px;text-align:left'>differentiator</th><th style='border:1px solid #cccccc;padding:5px;text-align:left'>value</th></tr><tr style='background-color:#f7f7f7'><td style='border:1px solid #cccccc;padding:5px;text-align:left'>app.a.b.com</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>CNAME</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>simple</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>&nbsp;</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>lb.app.a.b.com</td></tr><tr style='background-color:#9be9ec'><td style='border:1px solid #cccccc;padding:5px;text-align:left'>lb.app.a.b.com</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>CNAME</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>GEO</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>Europe</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>eu.lb.app.a.b.com</td></tr><tr style='background-color:#fdf3a6'><td style='border:1px solid #cccccc;padding:5px;text-align:left'>lb.app.a.b.com</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>CNAME</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>GEO</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>United States</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>us.lb.app.a.b.com</td></tr><tr style='background-color:#fdf3a6'><td style='border:1px solid #cccccc;padding:5px;text-align:left'>lb.app.a.b.com</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>CNAME</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>GEO</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>default</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>us.lb.app.a.b.com</td></tr><tr style='background-color:#fdf3a6'><td style='border:1px solid #cccccc;padding:5px;text-align:left'>us.lb.app.a.b.com</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>CNAME</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>weighted</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>120</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>c1.lb.app.a.b.com</td></tr><tr style='background-color:#9be9ec'><td style='border:1px solid #cccccc;padding:5px;text-align:left'>eu.lb.app.a.b.com</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>CNAME</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>weighted</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>120</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>c2.lb.app.a.b.com</td></tr><tr style='background-color:#9be9ec'><td style='border:1px solid #cccccc;padding:5px;text-align:left'>c1.lb.app.a.b.com</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>A</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>simple</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>&nbsp;</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>84.17.23.1</td></tr><tr style='background-color:#fdf3a6'><td style='border:1px solid #cccccc;padding:5px;text-align:left'>c2.lb.app.a.b.com</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>CNAME</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>simple</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>&nbsp;</td><td style='border:1px solid #cccccc;padding:5px;text-align:left'>lb.aws.com</td></tr></table><br/><table style='font-size:12px;text-align:left'><tr><td style='color:#777777'>■</td><td>Common Records (all controllers)</td></tr><tr><td style='color:#26c1c6'>■</td><td>Cluster 1 (eu) Specific Records</td></tr><tr><td style='color:#d8ce00'>■</td><td>Cluster 2 (us) Specific Records</td></tr></table>"]
+
+    KO1 -->|Configure| PEC1
+    KO1 -->|Integrate| GW1
+    KO1 -->|Reconcile| PCR1
+    PCR1 -->|target| GW1
+    PCR2 <-->|Reconcile| KO2
+    %% Target the group title so Dagre can route the reverse-ranked group edge.
+    PEC2_HEADER <-->|Configure| KO2
+    GW2 <-->|Integrate| KO2
+    GW2 <-->|target| PCR2
+    LIM1 -->|counters| STOR
+    STOR <-->|counters| LIM2
+    CM1 -->|integrate| ACME
+    ACME <-->|Integrate| CM2
+    AUT1 -->|integrate| AUTHP
+    AUTHP <-->|Integrate| AUT2
+    DNSO1 -->|integrate| DNSP
+    DNSP <-->|integrate| DNSO2
+    ACME --> AUTHP
+    DNSP --- ZONE
+    ZONE -->|"North/South (Kuadrant)"| DOC
+    GW1 --> BK1
+    GW1 --> LIM1
+    GW1 ~~~ CM1
+    GW1 --> AUT1
+    BK2 <--> GW2
+    LIM2 <--> GW2
+    CM2 ~~~ GW2
+    AUT2 <--> GW2
+    BK1 -->|"East/West  (Skupper / Submariner)"| BK2
+    CEU -->|"HTTP(s) Request"| LB1
+    LB1 --> GW1
+    CUS -->|"HTTP(s) Request"| LB2
+    LB2 --> GW2
+    CEU ---|"look up"| ZONE
+    CUS ---|"look up"| ZONE
+
+    style OUTER fill:#cccccc,stroke:#333333,stroke-dasharray:4 4
+    style KSC fill:#e0dc95,stroke:#666666,stroke-dasharray:4 4
+    style C1 fill:#f2f0d7,stroke:#666666,stroke-dasharray:2 2
+    style C2 fill:#f0f0f0,stroke:#666666,stroke-dasharray:2 2
+    style PEC1 fill:#c6bace,stroke:#555555
+    style PEC2 fill:#c6bace,stroke:#555555
+    style PCR1 fill:#e4ed9e,stroke:#333333
+    style PCR2 fill:#e4ed9e,stroke:#333333
+    style GW1 fill:#39a2a0,stroke:#1f5f5e
+    style GW2 fill:#39a2a0,stroke:#1f5f5e
+    style DOC fill:#ffffff,stroke:#333333
+
+    classDef opnode fill:#e9e9e9,stroke:#444444
+    class KO1,KO2,LIM1,CM1,AUT1,DNSO1,LIM2,CM2,AUT2,DNSO2,ACME,AUTHP,DNSP opnode
+    classDef policy fill:#ffffff,stroke:#333333,font-weight:bold
+    class DP1,TP1,RLP1,AP1,DP2,TP2,AP2 policy
+    classDef rlpfaded fill:#e9f4b2,stroke:#9aa96a,color:#8a9a55,font-weight:bold
+    class RLP2 rlpfaded
+    classDef backend fill:#81cdb1,stroke:#2e7d63
+    class BK1,BK2 backend
+    classDef wasm fill:#f0f0f0,stroke:#555555
+    class WASM1,WASM2 wasm
+    classDef lb fill:#ffffff,stroke:#333333,font-weight:bold
+    class LB1,LB2 lb
+    classDef store fill:#ffffff,stroke:#333333
+    class STOR,ZONE store
+    classDef clientnode fill:#d9d9d9,stroke:#666666
+    class CEU,CUS clientnode
+
+    style PEC2_HEADER fill:none,stroke:none
+    linkStyle 17 marker-end:none
+
+    STOR ~~~ AUTHP
+
+    %% These edges rank the US cluster on the right, with arrowheads pointing left.
+    linkStyle 4,5,6,7,9,11,13,15 marker-end:none
+    linkStyle 19 stroke:#7fbf3f,stroke-width:2px
+    linkStyle 20 stroke:#7fbf3f,stroke-width:2px
+    linkStyle 22 stroke:#7fbf3f,stroke-width:2px
+    linkStyle 23 stroke:#7fbf3f,stroke-width:2px,marker-end:none
+    linkStyle 24 stroke:#7fbf3f,stroke-width:2px,marker-end:none
+    linkStyle 26 stroke:#7fbf3f,stroke-width:2px,marker-end:none
+    linkStyle 27 stroke:#7fbf3f,stroke-width:2px
+    linkStyle 28 stroke:#7fbf3f,stroke-width:2px
+    linkStyle 29 stroke:#7fbf3f,stroke-width:2px
+    linkStyle 30 stroke:#7fbf3f,stroke-width:2px
+    linkStyle 31 stroke:#7fbf3f,stroke-width:2px
+    linkStyle 32 stroke:#7fbf3f,stroke-width:2px,marker-end:none
+    linkStyle 33 stroke:#7fbf3f,stroke-width:2px,marker-end:none
+```
 
 
 Shown above is a multi-cluster multi ingress gateway topology. This might be used to support a geographically distributed system for example. However, it is also possible to leverage overlay networking tools such as [Skupper](https://skupper.io) that integrate at the Kubernetes service level to have a single gateway cluster that then integrates with multiple backends (on different clusters or in custom infrastructure).
@@ -99,7 +573,74 @@ or in a separate cluster completely.
 Below are 2 example architectures based on the single cluster and multi cluster layouts.
 In the single cluster architecture, the collector components (Prometheus, Vector and Tempo) are in the same cluster as the log aggregation (Loki) and visualisation component (Grafana).
 
-![](./images/arch_observability_1.jpg)
+```mermaid
+---
+config:
+  layout: dagre
+  fontFamily: Arial
+  themeCSS: '.cluster-label div { max-width: none !important; width: max-content !important; white-space: nowrap !important; }'
+---
+flowchart TB
+    subgraph OUTER["<b>Kuadrant - Components and Layout</b>"]
+        direction TB
+        subgraph KS["Kuadrant System"]
+            direction TB
+            subgraph DEPS["<u>Dependencies</u>"]
+                direction LR
+                LIMOP("Limitador<br/>Operator")
+                DNSOP("DNS<br/>Operator")
+                AUTHOP("Authorino<br/>Operator")
+            end
+            KOP("Kuadrant<br/>Operator<br/>(policy controller)")
+            LIM("Limitador")
+            AUTH("Authorino")
+            CERT("Cert<br/>Manager")
+        end
+        subgraph MS["Monitoring System"]
+            direction TB
+            subgraph COLL["<u>Collectors</u>"]
+                direction LR
+                TEMPO("Tempo<br/>(traces)")
+                PROM("Prometheus<br/>(metrics)")
+                VECTOR("Vector<br/>(logs)")
+            end
+            subgraph AGG["<u>Aggregation &amp; Visualisation</u>"]
+                direction RL
+                GRAFANA("Grafana<br/>(Dashboards)")
+                LOKI("Loki<br/>(logs)")
+            end
+        end
+    end
+
+    KOP ~~~ LIM
+    LIMOP ~~~ LIM
+    DNSOP ~~~ AUTH
+    AUTHOP ~~~ CERT
+    KS --> TEMPO
+    KS <--> PROM
+    KS <--> VECTOR
+    TEMPO --> GRAFANA
+    PROM --> GRAFANA
+    VECTOR --> LOKI
+    LOKI --> GRAFANA
+
+    %% Preserve the original arrow direction while ranking its target first.
+    linkStyle 5,6 marker-end:none
+
+    classDef kuadrant fill:#1dccd6,stroke:#000000,color:#000000
+    classDef collector fill:#f5e642,stroke:#000000,color:#000000
+    classDef aggviz fill:#7cb342,stroke:#000000,color:#000000
+    class LIMOP,DNSOP,AUTHOP,KOP,LIM,AUTH,CERT kuadrant
+    class TEMPO,PROM,VECTOR collector
+    class GRAFANA,LOKI aggviz
+
+    style OUTER fill:#c9c9c9,stroke:#000000,stroke-dasharray:5 5
+    style KS fill:#ececec,stroke:#000000
+    style MS fill:#ececec,stroke:#000000
+    style DEPS fill:#f5f5f5,stroke:#000000,stroke-dasharray:5 5
+    style COLL fill:#f5f5f5,stroke:#000000,stroke-dasharray:5 5
+    style AGG fill:#f5f5f5,stroke:#000000,stroke-dasharray:5 5
+```
 
 In the multi cluster architecture, the collectors that scrape metrics or logs (Prometheus & Vector) are deployed alongside the workloads in each cluster.
 However, as traces are sent to a collector (Tempo) from each component, it can be centralised in a separate cluster.
@@ -107,7 +648,76 @@ Thanos is used in this architecutre so that each prometheus can federate metrics
 The log collector (vector) can forward logs to a central loki instance.
 Finally, the visualisation component (Grafana) is centralised as well, with data sources configured for each of the 3 components on the same cluster.
 
-![](./images/arch_observability_2.jpg)
+```mermaid
+---
+config:
+  layout: dagre
+  fontFamily: Arial
+  themeCSS: '.cluster-label div { max-width: none !important; width: max-content !important; white-space: nowrap !important; }'
+---
+flowchart TB
+    subgraph OUTER["<b>Kuadrant  - Components and Layout</b>"]
+        direction TB
+        subgraph KS["Kuadrant System"]
+            direction TB
+            KOP("Kuadrant<br/>Operator<br/>(policy controller)")
+            subgraph DEPS["<u>Dependencies</u>"]
+                direction LR
+                LO("Limitador<br/>Operator")
+                DO("DNS<br/>Operator")
+                AO("Authorino<br/>Operator")
+            end
+            LIM("Limitador")
+            AUTH("Authorino")
+            CERT("Cert<br/>Manager")
+        end
+        subgraph LMS["Local Monitoring System"]
+            subgraph LC["<u>Local Collectors</u>"]
+                PROM("Prometheus<br/>(metrics)")
+                VEC("Vector<br/>(logs)")
+            end
+        end
+        subgraph CMS["Central Monitoring System"]
+            subgraph AV["<u>Aggregation &amp; Visualisation</u>"]
+                TEMPO("Tempo<br/>(traces)")
+                THANOS("Thanos<br/>(metrics)")
+                LOKI("Loki<br/>(logs)")
+                GRAF("Grafana<br/>(Dashboards)")
+            end
+        end
+    end
+
+    KOP ~~~ LIM
+    LO ~~~ LIM
+    DO ~~~ AUTH
+    AO ~~~ CERT
+    KS <--> PROM
+    KS <--> VEC
+    KS --> TEMPO
+    PROM --> THANOS
+    VEC --> LOKI
+    TEMPO --> GRAF
+    THANOS --> GRAF
+    LOKI --> GRAF
+    %% Preserve the original arrow direction while ranking its target first.
+    linkStyle 4 marker-end:none
+    linkStyle 5 marker-end:none
+
+    classDef kuadrant fill:#12CDD4,stroke:#000000,color:#000000
+    classDef collector fill:#FEF444,stroke:#000000,color:#000000
+    classDef central fill:#8FD04E,stroke:#000000,color:#000000
+    class LO,DO,AO,KOP,LIM,AUTH,CERT kuadrant
+    class PROM,VEC collector
+    class TEMPO,THANOS,LOKI,GRAF central
+
+    style OUTER fill:#CCCCCC,stroke:#000000,stroke-dasharray:8 8,color:#000000
+    style KS fill:#E6E6E6,stroke:#000000,color:#000000
+    style LMS fill:#E6E6E6,stroke:#000000,color:#000000
+    style CMS fill:#E6E6E6,stroke:#000000,color:#000000
+    style DEPS fill:#F0F0F0,stroke:#000000,stroke-dasharray:8 8,color:#000000
+    style LC fill:#F0F0F0,stroke:#000000,stroke-dasharray:8 8,color:#000000
+    style AV fill:#F0F0F0,stroke:#000000,stroke-dasharray:8 8,color:#000000
+```
 
 ### Dependencies
 
