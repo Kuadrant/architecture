@@ -3,7 +3,7 @@
 - Feature Name: `ratelimitpolicy-response-customization`
 - Start Date: 2026-09-25
 - RFC PR: [Kuadrant/architecture#0000](https://github.com/Kuadrant/architecture/pull/0000)
-- Issue tracking: [Kuadrant/kuadrant-operator#0000](https://github.com/Kuadrant/kuadrant-operator/issues/0000)
+- Issue tracking: [Kuadrant/kuadrant-operator#2323](https://github.com/Kuadrant/kuadrant-operator/issues/2323)
 
 ## Summary
 
