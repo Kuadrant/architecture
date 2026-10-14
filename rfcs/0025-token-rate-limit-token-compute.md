@@ -90,7 +90,7 @@ spec:
       - expression: auth.identity.userid
 ```
 
-Or, weighting cached tokens at 40% of a normal token's cost. Cached tokens are absent whenever a response had no cache hit, so the expression defaults that field to `0` with a ternary; see [Missing fields](#missing-fields-best-effort-extraction-and-defaults):
+Or, weighting cached tokens at 40% of a normal token's cost (i.e. discounting them by 60%). Cached tokens are absent whenever a response had no cache hit, so the expression defaults that field to `0` with a ternary; see [Missing fields](#missing-fields-best-effort-extraction-and-defaults):
 
 ```yaml
 spec:
@@ -99,10 +99,12 @@ spec:
       inputTokens: ["/usage/input_tokens"]
       outputTokens: ["/usage/output_tokens"]
       cachedTokens: ["/usage/cache_read_input_tokens"]
-  tokenCompute: "extracted.response.outputTokens + extracted.response.inputTokens - 0.6 * (extracted.response.cachedTokens != null ? extracted.response.cachedTokens : 0)"
+  tokenCompute: "int(extracted.response.inputTokens) + int(extracted.response.outputTokens) - int(double(extracted.response.cachedTokens != null ? extracted.response.cachedTokens : 0) * 0.6)"
 ```
 
-Every name referenced as `extracted.response.<name>` in `tokenCompute` must be either `totalTokens` (whose pointer list always resolves, explicit or defaulted) or a target name actually present under this policy's (effective, post defaults/overrides) `dataExtraction.response` — nothing else resolves, by design; see [Validation](#validation-1). `tokenCompute` must evaluate to a number; the operator clamps it to a non-negative integer (see below). An expression that can never be numeric (a boolean, a list) is rejected at validation.
+**Arithmetic is single-type.** The CEL runtime does not implicitly convert between numeric types: every operand of a `+`, `-`, `*`, or `/` must be the same type, or the expression errors at evaluation (a fail-open miss; see [Missing fields](#missing-fields-best-effort-extraction-and-defaults) and [Validation](#validation-1)). Extracted values are dynamically typed — a pointer resolves to whatever the JSON actually holds (an integer for every mainstream provider's token counts, but a float or a string is possible) — so the robust pattern is to wrap every operand in an explicit `int(...)` (or `double(...)`), making the expression type-stable regardless of a provider's number shape. In the example above the 40%-weight multiply is done in floating point (`double(...) * 0.6`) and converted straight back with `int(...)`, so that term, `inputTokens`, and `outputTokens` are all integers where they meet at `+`/`-`. Note the `* 0.6` must stay *inside* the `int(...)` while its operand is still a `double`: `int(x) * 0.6` is `int * float` and would error. A possibly-absent field is defaulted (`!= null ? … : 0`) before `int()`, since `int(null)` errors. Integer division truncates toward zero, so a per-term weight like this rounds each response's discount down (sub-token bias); keep the whole expression in `double(...)` and let the operator's final conversion truncate once if that bias matters.
+
+Every name referenced as `extracted.response.<name>` in `tokenCompute` must be either `totalTokens` (always a valid reference — its candidate list is defined explicitly or by the built-in default, so it stays referenceable even in a policy that declares only other names, though at runtime it resolves to `null` like any target when no candidate matches a given response) or a target name actually present under this policy's (effective, post defaults/overrides) `dataExtraction.response` — nothing else is a valid reference, by design; see [Validation](#validation-1). `tokenCompute` must evaluate to a number; the operator clamps it to a non-negative integer (see below). An expression that can never be numeric (a boolean, a list) is rejected at validation.
 
 The author writes plain arithmetic; the operator wraps it so the charged value (`hits_addend` in Optimistic mode, `actualAmount` in Reservation mode) is always a non-negative integer — fractional parts truncated toward zero, a negative result clamped to `0`. The sign is not statically knowable (it depends on the per-response extracted values), and a negative value reaching the counter would corrupt the limit, so guaranteeing the clamp is the operator's responsibility, not the author's.
 
@@ -112,10 +114,12 @@ The author writes plain arithmetic; the operator wraps it so the charged value (
 
 Extraction is best-effort: if none of a target's pointer candidates resolve against a response, `extracted.response.<name>` evaluates to `null`. A `null` is a valid value, not an error — on its own it fails neither the request nor the limit. What it means is the author's decision, expressed in `tokenCompute`:
 
-- **Default it** with a ternary: `extracted.response.cachedTokens != null ? extracted.response.cachedTokens : 0`. (`!= null` is the idiom; `has()` does not apply to an extracted value.)
-- **Leave it** to propagate. A `null` in arithmetic or in the operator's integer conversion fails that one response's evaluation, so the limit is not charged and the request proceeds uncounted — fail-open, under the same control-plane-wide `FailureMode` RFC 0024 already governs. Not defaulting an optional field is thus an implicit "don't rate-limit a response I can't fully compute."
+- **Default it** with a ternary: `extracted.response.cachedTokens != null ? extracted.response.cachedTokens : 0`. (`!= null` is the idiom; `has()` does not apply — after the operator substitutes the target for its `responseBodyJSON(...)` call, the reference is a function result that is always present and simply holds `null` when nothing resolved, not a map key whose presence `has()` could test.)
+- **Leave it** to propagate. A `null` in arithmetic or in the operator's integer conversion fails that one response's evaluation, so the limit is not charged and the request proceeds uncounted — fail-open, under the per-service `FailureMode` (the response-phase report service in Optimistic mode and the commit service in Reservation mode, both defaulting to fail-open and independently configurable via `RATELIMIT_REPORT_SERVICE_FAILURE_MODE` / `RATELIMIT_COMMIT_SERVICE_FAILURE_MODE`). Not defaulting an optional field is thus an implicit "don't rate-limit a response I can't fully compute."
 
 Default the genuinely optional dimensions (cached, reasoning, tool tokens); a field the target provider always sends (e.g. Anthropic's `input_tokens`/`output_tokens`) needs none. For a token count in a sum, `0` is the correct default — an absent count is a zero count.
+
+Be deliberate about which fields you leave undefaulted: because the failure is fail-open, forgetting a default on a field that is merely *usually* present (not always) means every response missing it goes **uncounted**, not rejected — an undercount, not a hard error. This is observable (the `body_extraction_misses` metric increments and a debug log is emitted on any unresolved referenced field), but note the same signal also fires for fields you *did* default, so it indicates a miss, not necessarily a dropped response; correlate it with the fail-open error path to tell them apart. When in doubt, default every optional numeric field.
 
 ### Extraction recipes (non-normative)
 
@@ -181,12 +185,14 @@ TokenCompute *string `json:"tokenCompute,omitempty"`
 
 `dataExtraction` remains a single mergeable rule (unchanged from RFC 0024): a more specific policy's `dataExtraction` replaces the entire `response` map atomically rather than merging key-by-key, so a route-level policy must repeat any gateway-level entries it still wants alongside its own.
 
+Because `tokenCompute` is a separate field in the same hierarchy, it and `dataExtraction` merge on independent axes: overriding one at a more specific policy does not carry the other along. An atomic `dataExtraction` replacement that drops a name still referenced by an inherited `tokenCompute` is caught at admission (the reference no longer resolves to a declared target; see [Validation](#validation-1)) rather than failing silently — but a policy that overrides `dataExtraction` should check that its effective `tokenCompute` still references only names it declares.
+
 ### Validation
 
 A policy's effective `tokenCompute` must satisfy two checks. Both are surfaced the way RFC 0021's `reservation.amount`/`reservation.ttl` CEL errors are today — the policy's `Enforced` condition set to `False` with a message naming the problem — reusing the CEL validator infrastructure this policy kind already applies to its other CEL fields (`when`/limit predicates, `reservation.amount`, `reservation.ttl`):
 
 1. **Known targets.** Every `extracted.response.<name>` referenced must resolve to a declared target: `totalTokens` (always available, explicit or defaulted) or a name present under this policy's effective (post `defaults`/`overrides`) `dataExtraction.response`. The valid set is whatever the policy itself declares, not a fixed enum — so adding a target name is a data change to one policy, never an operator change. A reference to any other source — `extracted.request.*`, or any other `extracted.<source>.*` — is rejected until that source exists; see [Future possibilities](#request-side-fields-feeding-tokencompute).
-2. **Numeric result.** The operator clamps the result to a non-negative integer (see [Emission](#emission)), so the expression must be convertible to a number. Extracted values are dynamically typed — a JSON Pointer can resolve to any basic JSON type (string, integer, float, boolean, null) — so this check rejects only an expression that can *never* be numeric: one evaluating to a boolean (`extracted.response.inputTokens > 100`), a list, and so on.
+2. **Numeric result.** The operator clamps the result to a non-negative integer (see [Emission](#emission)), so the expression must be convertible to a number. Extracted values are dynamically typed — a JSON Pointer can resolve to any basic JSON type (string, integer, float, boolean, null) — so this check rejects only an expression that can *never* be numeric: one evaluating to a boolean (`extracted.response.inputTokens > 100`), a list, and so on. Because those values are dynamically typed, this check cannot catch an operand *type-mismatch* within otherwise-numeric arithmetic (e.g. `0.6 * extracted.response.inputTokens`, mixing a float literal with an integer): such an expression passes admission and errors only at evaluation, as a fail-open miss. Authors avoid this by following the single-type rule in [Computing the charged value](#computing-the-charged-value-tokencompute).
 
 ### Emission
 
@@ -196,9 +202,9 @@ The result is an ordinary CEL expression over one or more `responseBodyJSON([...
 
 ## wasm-shim
 
-One change: **best-effort extraction.** Today a `responseBodyJSON(...)` whose candidates never resolve fails the extraction task at end-of-stream, aborting the action. For `tokenCompute` to treat an unresolved field as a `null` the author can test (see [Missing fields](#missing-fields-best-effort-extraction-and-defaults)), an unresolved group must instead resolve to `null` and let evaluation proceed. Readiness is unchanged — a value is only finalized as `null` once the response stream has ended, never prematurely mid-stream. The existing "no candidate resolved" observability (log line / metric) is kept, moving from a task-failure signal to a per-field extraction-miss signal, so a miss stays diagnosable.
+One change: **best-effort extraction.** Today, when none of a `responseBodyJSON(...)` group's candidates resolve by end-of-stream, the extraction fails and that value is skipped; the request still proceeds (fail-open). For `tokenCompute` to treat an unresolved field as a `null` the author can test (see [Missing fields](#missing-fields-best-effort-extraction-and-defaults)), an unresolved group must instead surface a `null` value — present at evaluation time, not absent — and evaluation proceeds. Readiness is unchanged: a field is finalized as `null` only once the response stream has ended, never prematurely mid-stream. The existing "no candidate resolved" observability (the `body_extraction_misses` metric and debug log) is kept, as a per-field extraction-miss signal, so a miss stays diagnosable.
 
-Everything else is unchanged and already supported: `responseBodyJSON` already returns `null` for an absent value, `x != null` and the ternary are standard CEL, and a `null` reaching arithmetic or the integer conversion already errors into the existing fail-open `FailureMode` path — so an unset-`tokenCompute` policy whose `totalTokens` does not resolve still fails open exactly as it does today. The substitution happens entirely inside kuadrant-operator — `extracted.*` never reaches wasm-shim, which sees only pointers and CEL and remains unaware of target names, so a new target name still needs no change there.
+Everything else is unchanged and already supported: `x != null` and the ternary are standard CEL, and a `null` reaching arithmetic or the integer conversion errors into the existing fail-open `FailureMode` path (the Optimistic report service and the Reservation commit service both default to fail-open) — so an unset-`tokenCompute` policy whose `totalTokens` does not resolve still fails open exactly as it does today. The substitution happens entirely inside kuadrant-operator — `extracted.*` never reaches wasm-shim, which sees only pointers and CEL and is unaware of target names, so a new target name still needs no change there.
 
 ## limitador
 
@@ -211,11 +217,27 @@ No changes, for the same reason RFC 0024 needed none: Limitador receives a plain
 
 # Drawbacks
 
-None significant.
+`tokenCompute` is a free-form CEL field, and its sharp edges share a direction: a misauthored expression tends to fail **open** (the response goes uncounted), not closed, and is not rejected at admission. Each is observable and mitigated, but none is caught for the author up front:
+
+- **Operand type-mismatches are not caught at admission.** Because extracted values are dynamically typed, an expression mixing numeric types (e.g. a float literal against an integer token count) passes operator validation and errors only at evaluation, as a fail-open miss. Mitigated by the single-type rule and `int()`/`double()` guidance in [Computing the charged value](#computing-the-charged-value-tokencompute) and the `body_extraction_misses` observability.
+- **An un-defaulted field that does not resolve drops the whole response from counting** — fail-open (an undercount), not a hard error, and easy to trigger by omission; see [Missing fields](#missing-fields-best-effort-extraction-and-defaults).
+- **`tokenCompute` and `dataExtraction` merge on independent axes**, so overriding one may require restating the other; a reference to a name dropped by an atomic `dataExtraction` replacement is rejected at admission (not silent); see [CRD changes](#crd-changes).
+- **A negative or out-of-range result is silently clamped to `0`.** The clamp is required (a negative charged value would corrupt the counter) and cannot be statically validated, so a sign error in a weight expression charges `0` rather than erroring.
+- **Validation and evaluation use different CEL implementations** (operator vs. data plane), so admission cannot fully guarantee runtime success. Inherited from RFC 0021's reservation CEL, amplified by `tokenCompute`'s arithmetic over dynamically-typed values.
 
 # Rationale and alternatives
 
 - **A `token('inputTokens')` function call** instead of `extracted.response.inputTokens` attribute access. Rejected: a target is fully determined by declaration (`dataExtraction.response` fixes its pointer candidates), so referencing one is just naming a declared value — dotted attribute access, not a runtime lookup. A function would misframe it, and diverge from every other reference in this system (`auth.*`, `request.*`, `ratelimit.*`).
+
+# Comparison with other published APIs
+
+No surveyed gateway exposes token accounting as configurable as this; each peer makes a different trade.
+
+- **[Kong `ai-rate-limiting-advanced`][kong-ai-rl]** counts tokens via a fixed `strategy` enum (`total_tokens`, `prompt_tokens`, `completion_tokens`, or cost-based), with provider response shapes recognized in plugin code. Simpler and cost-aware out of the box, with no author-written arithmetic to misauthor — but a new provider or a bespoke weighting needs a plugin change, exactly the code-release dependency this RFC's `dataExtraction` + `tokenCompute` removes.
+- **[LiteLLM][litellm-budgets]** and **[Portkey][portkey-limits]** parse usage per provider in code and enforce token/cost budgets. Zero extraction config (and zero footguns), at the cost of zero generality: an unrecognized shape is unsupported until the code learns it.
+- **[Apigee][apigee-quota]** is the closest conceptual twin: `ExtractVariables` pulls named values from a message and the `Quota` policy consumes one. But quota consumption is a plain variable reference, not an arithmetic expression — there is no equivalent of combining several extracted values into a computed charge.
+
+The distinguishing choice here is that a new provider shape or a new weighting is a **policy-spec data change, never a code change** — achieved by pushing both extraction (open pointer-candidate map) and combination (free-form `tokenCompute` CEL) into the policy. The cost of that generality is the author-owned-correctness edges catalogued in [Drawbacks](#drawbacks); the peers above avoid those edges precisely by giving up the generality.
 
 # Prior art
 
@@ -246,8 +268,16 @@ The source-qualified `extracted` namespace was chosen for this: once `dataExtrac
 - [Anthropic Messages][anthropic-messages]
 - [Google Gemini generateContent][gemini-generate-content]
 - [CEL conversion functions (`uint()`, etc.)][cel-conversions]
+- [Kong AI Rate Limiting Advanced][kong-ai-rl]
+- [LiteLLM budgets and rate limits][litellm-budgets]
+- [Portkey budgets and rate limits][portkey-limits]
+- [Apigee Quota policy][apigee-quota]
 
 [openai-chat]: https://platform.openai.com/docs/api-reference/chat/create
 [anthropic-messages]: https://docs.anthropic.com/en/api/messages
 [gemini-generate-content]: https://ai.google.dev/api/generate-content#v1beta.GenerateContentResponse
 [cel-conversions]: https://github.com/google/cel-spec/blob/master/doc/langdef.md#conversions
+[kong-ai-rl]: https://docs.konghq.com/hub/kong-inc/ai-rate-limiting-advanced/
+[litellm-budgets]: https://docs.litellm.ai/docs/proxy/users
+[portkey-limits]: https://portkey.ai/docs/product/administration/enforce-budget-and-rate-limit
+[apigee-quota]: https://cloud.google.com/apigee/docs/api-platform/reference/policies/quota-policy
